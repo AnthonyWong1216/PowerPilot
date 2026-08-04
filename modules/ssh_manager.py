@@ -495,3 +495,154 @@ class SSHManager:
                 shell["channel"].resize_pty(width=cols, height=rows)
             except Exception:
                 pass
+
+    # ──────────────────────────────────────────────────────
+    # Script deployment (SFTP / SCP)
+    # ──────────────────────────────────────────────────────
+
+    def deploy_file(self, local_path, host, port=22, username="root",
+                    password="", target_path="", method="sftp") -> dict:
+        """Upload a local file to a remote server via SFTP or SCP.
+
+        Parameters
+        ----------
+        local_path  : absolute path of the local file to upload
+        host        : remote host / IP
+        port        : SSH port (default 22)
+        username    : remote username
+        password    : remote password
+        target_path : remote destination. May be a directory (ends with '/')
+                      or a full file path. If a directory, the local filename
+                      is appended.
+        method      : "sftp" or "scp" (both run over the SSH transport)
+
+        Returns {"ok": True, "message": ...} or {"ok": False, "error": ...}.
+        """
+        local = Path(os.path.expanduser(local_path))
+        if not local.is_file():
+            return {"ok": False, "error": f"Local file not found: {local}"}
+
+        filename = local.name
+
+        # Resolve the remote destination path.
+        dest = (target_path or "").strip()
+        if not dest:
+            dest = filename
+        elif dest.endswith("/"):
+            dest = dest + filename
+
+        client = paramiko.SSHClient()
+        client.set_missing_host_key_policy(paramiko.AutoAddPolicy())
+        try:
+            client.connect(hostname=host, port=port, username=username,
+                           password=password, look_for_keys=False,
+                           allow_agent=False, timeout=15, banner_timeout=15)
+        except paramiko.AuthenticationException:
+            return {"ok": False, "error": "Authentication failed — check username/password"}
+        except Exception as exc:
+            return {"ok": False, "error": f"Connection failed: {exc}"}
+
+        try:
+            if method == "scp":
+                return self._deploy_scp(client, str(local), dest, filename)
+            return self._deploy_sftp(client, str(local), dest, filename)
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def _deploy_sftp(self, client, local, dest, filename) -> dict:
+        """Upload via SFTP subsystem.
+
+        The "mode out of range" error is raised by paramiko when it packs an
+        out-of-range permission mode into an SFTP attribute message. This can
+        happen in three places:
+
+          1. ``sftp.put`` — it reads the *local* file's ``os.stat().st_mode``
+             (on Windows this can overflow the 32-bit SFTP field).
+          2. ``sftp.stat``/directory-detection — some restricted SFTP servers
+             (e.g. VIOS ``padmin``) return unexpected mode values.
+          3. ``sftp.chmod`` with a bad mode value.
+
+        To be robust we:
+          * Detect a directory target *without* trusting the returned mode
+            (we simply try ``listdir`` on the path).
+          * Upload with ``putfo`` (streamed, no local-mode preservation).
+          * chmod with a plain, in-range octal literal, and never let a chmod
+            failure abort an otherwise-successful upload.
+        """
+        try:
+            sftp = client.open_sftp()
+            try:
+                # If the caller pointed at an existing directory, append the
+                # local filename. Use listdir() rather than stat().st_mode so we
+                # never touch a possibly-out-of-range mode value.
+                if not dest.endswith("/" + filename):
+                    try:
+                        sftp.listdir(dest)      # succeeds only for directories
+                        dest = dest.rstrip("/") + "/" + filename
+                    except IOError:
+                        # Not a directory (or does not exist) — treat as a file
+                        # path. That's fine for a new upload.
+                        pass
+
+                file_size = os.path.getsize(local)
+                with open(local, "rb") as fh:
+                    # confirm=False avoids a post-upload stat() round-trip and
+                    # putfo does not preserve the local file's mode bits, so the
+                    # "mode out of range" condition cannot be triggered here.
+                    sftp.putfo(fh, dest, file_size=file_size, confirm=False)
+
+                # Best-effort permission set. A plain octal literal is always in
+                # range; wrap in try/except so a restricted SFTP server that
+                # rejects chmod does not fail the whole deployment.
+                try:
+                    sftp.chmod(dest, 0o755)
+                except Exception as chmod_exc:
+                    logger.debug("SFTP chmod skipped for %s: %s", dest, chmod_exc)
+            finally:
+                sftp.close()
+            return {"ok": True, "message": f"Deployed via SFTP to {dest}",
+                    "target": dest}
+        except Exception as exc:
+            return {"ok": False, "error": f"SFTP upload failed: {exc}"}
+
+    def _deploy_scp(self, client, local, dest, filename) -> dict:
+        """Upload via SCP protocol (scp -t on the remote host)."""
+        try:
+            file_size = os.path.getsize(local)
+            transport = client.get_transport()
+            channel = transport.open_session()
+            channel.settimeout(30)
+            # scp -t writes an incoming file to <dest>. If dest is a directory
+            # the remote scp appends the filename automatically.
+            channel.exec_command(f'scp -t "{dest}"')
+
+            def _wait_ok():
+                resp = channel.recv(1)
+                if resp != b"\x00":
+                    extra = b""
+                    while channel.recv_ready():
+                        extra += channel.recv(1024)
+                    raise IOError((resp + extra).decode(errors="replace").strip()
+                                  or "SCP protocol error")
+
+            _wait_ok()
+            channel.sendall(f"C0755 {file_size} {filename}\n".encode())
+            _wait_ok()
+            with open(local, "rb") as fh:
+                while True:
+                    chunk = fh.read(32768)
+                    if not chunk:
+                        break
+                    channel.sendall(chunk)
+            channel.sendall(b"\x00")
+            _wait_ok()
+            channel.close()
+            return {"ok": True, "message": f"Deployed via SCP to {dest}",
+                    "target": dest}
+        except Exception as exc:
+            return {"ok": False, "error": f"SCP upload failed: {exc}"}
+
+

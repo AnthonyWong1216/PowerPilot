@@ -1127,7 +1127,7 @@ async function toggleHostRow(idx, hostName){
     html += '<p class="muted" style="font-size:12px;">No volumes mapped to this host.</p>';
   } else {
     html += `<div style="overflow-x:auto;"><table class="data-table">
-      <thead><tr><th>Volume Name</th><th>SCSI ID (LUN)</th><th>Volume ID</th><th>Capacity</th><th>Pool</th></tr></thead><tbody>`;
+      <thead><tr><th>Volume Name</th><th>SCSI ID (LUN)</th><th>Volume ID</th><th>Capacity</th><th>Pool</th><th></th></tr></thead><tbody>`;
     maps.forEach(m=>{
       const vn = _mapVol(m);
       const volInfo = _allVols.find(v=>(v.name||v.id||'').trim()===vn) || {};
@@ -1139,6 +1139,7 @@ async function toggleHostRow(idx, hostName){
         <td>${esc(m.vdisk_id||volInfo.id||'—')}</td>
         <td>${esc(cap)}</td>
         <td>${esc(volInfo.mdisk_grp_name||volInfo.pool||'—')}</td>
+        <td><button class="btn-rm" title="Unmap volume" onclick="event.stopPropagation();unmapVolume('${esc(hostName)}','${esc(vn)}')">&#10005;</button></td>
       </tr>`;
     });
     html += '</tbody></table></div>';
@@ -1179,7 +1180,7 @@ async function toggleVolRow(idx, volName){
       hostNames.map(h=>`<span class="map-badge">${esc(h)}</span>`).join('') + '</div>';
 
     html += `<div style="overflow-x:auto;"><table class="data-table">
-      <thead><tr><th>Host Name</th><th>SCSI ID (LUN)</th><th>Host ID</th><th>Host Type</th><th>Status</th></tr></thead><tbody>`;
+      <thead><tr><th>Host Name</th><th>SCSI ID (LUN)</th><th>Host ID</th><th>Host Type</th><th>Status</th><th></th></tr></thead><tbody>`;
     maps.forEach(m=>{
       const hn    = _mapHost(m);
       const hInfo = _allHosts.find(h=>(h.name||h.id||'').trim()===hn) || {};
@@ -1190,11 +1191,37 @@ async function toggleVolRow(idx, volName){
         <td>${esc(m.host_id||hInfo.id||'—')}</td>
         <td><span class="badge badge-blue">${esc(hInfo.type||hInfo.host_type||'—')}</span></td>
         <td>${statusBadge(hInfo.status||'—')}</td>
+        <td><button class="btn-rm" title="Unmap volume" onclick="event.stopPropagation();unmapVolume('${esc(hn)}','${esc(volName)}')">&#10005;</button></td>
       </tr>`;
     });
     html += '</tbody></table></div>';
   }
   inner.innerHTML = html;
+}
+
+/* ── Unmap a volume from a host (rmvdiskhostmap) ── */
+async function unmapVolume(hostName, volName){
+  if(!hostName || !volName){ alert('Missing host or volume name.'); return; }
+  if(!confirm(`Unmap volume "${volName}" from host "${hostName}"?\n\nThis removes the host-to-volume mapping (rmvdiskhostmap).`)) return;
+  try{
+    const r=await fetch('/api/storage/mappings/remove',{
+      method:'POST',
+      headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({host:hostName, volume:volName}),
+    });
+    const d=await r.json();
+    if(d.ok){
+      // Refresh cached data and re-render both tables.
+      await _fetchAll();
+      loadHosts();
+      loadVolumes();
+      populateMapDropdowns();
+    } else {
+      alert(`Failed to unmap volume "${volName}" from host "${hostName}":\n${d.error||'Unknown error'}`);
+    }
+  }catch(err){
+    alert(`Network error unmapping volume: ${err.message}`);
+  }
 }
 
 /* ── Host → Mapped Disks ── */

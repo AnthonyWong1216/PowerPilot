@@ -247,6 +247,12 @@ def jobs_page():
     return render_template("jobs.html")
 
 
+@app.route("/deploy-scripts")
+def deploy_scripts_page():
+    return render_template("deploy_scripts.html")
+
+
+
 @app.route("/san-switches")
 def san_switches_page():
     return render_template("san_switches.html")
@@ -342,6 +348,77 @@ def generate_ssh_key():
         comment=data.get("comment", "powerpilot"),
     )
     return jsonify(result)
+
+
+# ──────────────────────────────────────────────────────────
+# Deploy Scripts API — list local scripts & push them to servers
+# ──────────────────────────────────────────────────────────
+
+SCRIPTS_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "scripts")
+
+
+@app.route("/api/scripts", methods=["GET"])
+def list_scripts():
+    """Return the files found in the local scripts/ folder."""
+    files = []
+    try:
+        for entry in sorted(os.listdir(SCRIPTS_DIR)):
+            full = os.path.join(SCRIPTS_DIR, entry)
+            if os.path.isfile(full):
+                files.append({
+                    "name": entry,
+                    "size": os.path.getsize(full),
+                })
+    except FileNotFoundError:
+        return jsonify({"ok": False, "error": "scripts folder not found"}), 404
+    return jsonify({"ok": True, "data": files})
+
+
+@app.route("/api/scripts/deploy", methods=["POST"])
+def deploy_script():
+    """Deploy a script from the local scripts/ folder to a remote server.
+
+    Body: {filename, host, username, password, method (sftp|scp), target_path, port}
+    """
+    data = request.get_json(force=True) or {}
+    filename    = (data.get("filename") or "").strip()
+    host        = (data.get("host") or "").strip()
+    username    = (data.get("username") or "").strip()
+    password    = data.get("password") or ""
+    method      = (data.get("method") or "sftp").strip().lower()
+    target_path = (data.get("target_path") or "").strip()
+    try:
+        port = int(data.get("port") or 22)
+    except (TypeError, ValueError):
+        port = 22
+
+    # Validate required fields
+    missing = [k for k, v in [
+        ("filename", filename), ("host", host), ("username", username),
+    ] if not v]
+    if missing:
+        return jsonify({"ok": False, "error": f"Missing: {', '.join(missing)}"}), 400
+
+    if method not in ("sftp", "scp"):
+        method = "sftp"
+
+    # Guard against path traversal — only allow files inside SCRIPTS_DIR.
+    safe_name = os.path.basename(filename)
+    local_path = os.path.join(SCRIPTS_DIR, safe_name)
+    if not os.path.isfile(local_path):
+        return jsonify({"ok": False, "error": f"Script not found: {safe_name}"}), 404
+
+    result = ssh_manager.deploy_file(
+        local_path=local_path,
+        host=host,
+        port=port,
+        username=username,
+        password=password,
+        target_path=target_path,
+        method=method,
+    )
+    return jsonify(result), (200 if result.get("ok") else 400)
+
 
 
 # ──────────────────────────────────────────────────────────
@@ -3237,6 +3314,15 @@ def storage_mappings_debug():
 def storage_map_volume():
     """Map a volume to a host (mkvdiskhostmap).
 
+    IBM Storage Virtualize REST API syntax:
+        POST /rest/v1/mkvdiskhostmap/<vdisk_name_or_id>
+    with the host name/ID and optional parameters in the JSON body.
+
+    mkvdiskhostmap syntax:
+        mkvdiskhostmap [-force] -host <host_id|host_name>
+                       [-scsi scsi_num] [-allowmismatchedscsiids]
+                       <vdisk_name|vdisk_id>
+
     Expected JSON body:
         {
             "host":   "my-server",     // host name or id
@@ -3252,8 +3338,39 @@ def storage_map_volume():
     if not volume:
         return jsonify({"ok": False, "error": "Volume name is required"}), 400
 
-    payload = {"host": host, "vdisk": volume}
-    result, status = _storage_post("mkvdiskhostmap", payload)
+    payload = {"host": host, "force": True}
+    result, status = _storage_post(f"mkvdiskhostmap/{volume}", payload)
+    return jsonify(result), status
+
+
+@app.route("/api/storage/mappings/remove", methods=["POST"])
+def storage_unmap_volume():
+    """Unmap a volume from a host (rmvdiskhostmap).
+
+    IBM Storage Virtualize REST API syntax:
+        POST /rest/v1/rmvdiskhostmap/<vdisk_name_or_id>
+    with the host name/ID in the JSON body.
+
+    rmvdiskhostmap syntax:
+        rmvdiskhostmap -host <host_id|host_name> <vdisk_id|vdisk_name>
+
+    Expected JSON body:
+        {
+            "host":   "my-server",     // host name or id
+            "volume": "my-vol-01"      // volume (vdisk) name or id
+        }
+    """
+    data = request.get_json(force=True) or {}
+    host   = (data.get("host")   or "").strip()
+    volume = (data.get("volume") or "").strip()
+
+    if not host:
+        return jsonify({"ok": False, "error": "Host name is required"}), 400
+    if not volume:
+        return jsonify({"ok": False, "error": "Volume name is required"}), 400
+
+    payload = {"host": host}
+    result, status = _storage_post(f"rmvdiskhostmap/{volume}", payload)
     return jsonify(result), status
 
 

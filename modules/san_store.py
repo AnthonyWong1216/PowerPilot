@@ -52,6 +52,7 @@ class SANStore:
             "name": data.get("name", ""),
             "host": data.get("host", ""),
             "vendor": data.get("vendor", "brocade"),   # brocade | cisco
+            "model": data.get("model", "auto"),         # auto | modern | legacy (e.g. 24B / FOS 6-7.x)
             "username": data.get("username", "admin"),
             "ssh_port": int(data.get("ssh_port", 22)),
             "auth_method": data.get("auth_method", "password"),  # password | ssh_key

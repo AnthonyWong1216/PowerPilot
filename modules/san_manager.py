@@ -160,9 +160,66 @@ class SANManager:
             return self._delete_cisco_zone(switch, zone_name)
         return self._delete_brocade_zone(switch, zone_name)
 
+    # ── Brocade model / FOS flavor helpers ─────────────────
+
+    # Legacy Brocade models (FOS 6.x / 7.x) that do NOT support the
+    # newer non-interactive flags such as `cfgsave -f` or `cfgshow --all`.
+    # The IBM/Brocade 2498-24B (SAN24B-4) falls into this group.
+    _LEGACY_MODEL_HINTS = (
+        "24b", "2498", "san24b", "300", "5000", "5100", "5300",
+        "silkworm", "fos6", "fos7",
+    )
+
+    def _is_legacy_brocade(self, switch: dict) -> bool:
+        """Return True when the switch should use the legacy (interactive)
+        FOS command variants.
+
+        Resolution order:
+          1. explicit model == "legacy"  → True
+          2. explicit model == "modern"  → False
+          3. model == "auto"/blank       → sniff the model/name string for
+             known legacy hints (e.g. "24B", "2498").
+        """
+        model = (switch.get("model") or "auto").strip().lower()
+        if model == "legacy":
+            return True
+        if model == "modern":
+            return False
+        # auto-detect: look at model + name for known legacy identifiers
+        haystack = " ".join([
+            str(switch.get("model") or ""),
+            str(switch.get("name") or ""),
+            str(switch.get("notes") or ""),
+        ]).lower()
+        return any(h in haystack for h in self._LEGACY_MODEL_HINTS)
+
+    def _cfgsave_spec(self, switch: dict):
+        """Return the cfgsave command spec appropriate for the switch model.
+
+        Modern FOS supports `cfgsave -f` (non-interactive). Legacy FOS
+        (e.g. 24B / FOS 6-7.x) has no `-f` flag and prompts for
+        confirmation, so we send the command with 'y' piped to stdin.
+        """
+        if self._is_legacy_brocade(switch):
+            return ("cfgsave", "y")   # (command, stdin_input)
+        return "cfgsave -f"
+
+    @staticmethod
+    def _cfgsave_key(spec) -> str:
+        """The cmd_map key / display name for the cfgsave step."""
+        cmd = spec[0] if isinstance(spec, tuple) else spec
+        return cmd  # "cfgsave" or "cfgsave -f"
+
+    def _cfgshow_cmd(self, switch: dict) -> str:
+        """`cfgshow --all` on modern FOS, plain `cfgshow` on legacy models."""
+        if self._is_legacy_brocade(switch):
+            return "cfgshow"
+        return "cfgshow --all 2>/dev/null || cfgshow"
+
     # ── Brocade write helpers ──────────────────────────────
 
     def _brocade_batch(self, switch: dict, cmds: dict) -> dict:
+
         """Run commands on ONE SSH connection. cmds is ordered {name: cmd_or_(cmd,stdin)}."""
         return self.ssh.run_hmc_commands_batch(
             host=switch["host"],
@@ -201,16 +258,20 @@ class SANManager:
         actv_r     = self._run(switch, "cfgactvshow")
         active_cfg = self._parse_brocade_active(actv_r.get("output", ""))
 
-        # Build the ordered command sequence on ONE connection
+        # Build the ordered command sequence on ONE connection.
+        # cfgsave variant depends on model (modern: `cfgsave -f`, legacy 24B: interactive `cfgsave` + 'y').
+        cfgsave_spec = self._cfgsave_spec(switch)
+        cfgsave_key  = self._cfgsave_key(cfgsave_spec)
         cmd_map = {
             "cfgabort":         "cfgabort",
             "alicreate":        ali_cmd,
             "alishow (verify)": f'alishow "{alias_name}"',
-            "cfgsave -f":       "cfgsave -f",
+            cfgsave_key:        cfgsave_spec,
         }
         if active_cfg:
             cmd_map[f"cfgenable ({active_cfg})"] = (f'cfgenable "{active_cfg}"', "y")
         cmd_map["cfgshow (verify)"] = "cfgshow"
+
 
         raw = self._brocade_batch(switch, cmd_map)
         commands_run = self._make_commands_run(raw, cmd_map)
@@ -234,14 +295,15 @@ class SANManager:
                     "error": f"Alias '{alias_name}' not found after alicreate. Check WWPN format and uniqueness.",
                     "commands_run": commands_run}
 
-        cfg_r    = raw.get("cfgsave -f", {})
+        cfg_r    = raw.get(cfgsave_key, {})
         cfg_out  = (cfg_r.get("output") or cfg_r.get("stderr") or "").strip()
         cfg_text = (cfg_out + " " + cfg_r.get("error", "")).lower()
         cfg_ok   = bool(cfg_r.get("ok")) or any(kw in cfg_text for kw in ("updating","done","saved","commit","nothing"))
 
         if not cfg_ok:
-            return {"ok": False, "error": f"cfgsave -f failed: {cfg_out}",
+            return {"ok": False, "error": f"{cfgsave_key} failed: {cfg_out}",
                     "commands_run": commands_run}
+
 
         verify_out = (raw.get("cfgshow (verify)", {}).get("output") or "").strip()
         in_cfgshow = alias_name.lower() in verify_out.lower()
@@ -263,10 +325,12 @@ class SANManager:
         actv_r     = self._run(switch, "cfgactvshow")
         active_cfg = self._parse_brocade_active(actv_r.get("output", ""))
 
+        cfgsave_spec = self._cfgsave_spec(switch)
+        cfgsave_key  = self._cfgsave_key(cfgsave_spec)
         cmd_map = {
             "cfgabort":    "cfgabort",
             "zonecreate":  f'zonecreate "{zone_name}", "{members_str}"',
-            "cfgsave -f":  "cfgsave -f",
+            cfgsave_key:   cfgsave_spec,
         }
         if active_cfg:
             cmd_map[f"cfgenable ({active_cfg})"] = (f'cfgenable "{active_cfg}"', "y")
@@ -279,14 +343,15 @@ class SANManager:
         if any(kw in z_out.lower() for kw in ("error", "invalid", "already", "fail", "not permitted")):
             return {"ok": False, "error": z_out or "zonecreate failed", "commands_run": commands_run}
 
-        cfg_r   = raw.get("cfgsave -f", {})
+        cfg_r   = raw.get(cfgsave_key, {})
         cfg_out = (cfg_r.get("output") or cfg_r.get("stderr") or "").strip()
         cfg_text = (cfg_out + " " + cfg_r.get("error","")).lower()
         cfg_ok = bool(cfg_r.get("ok")) or any(kw in cfg_text for kw in ("updating","done","saved","commit","nothing"))
         if not cfg_ok:
-            return {"ok": False, "error": f"cfgsave -f failed: {cfg_out}", "commands_run": commands_run}
+            return {"ok": False, "error": f"{cfgsave_key} failed: {cfg_out}", "commands_run": commands_run}
 
         return {"ok": True, "output": f"Zone '{zone_name}' created and saved.", "commands_run": commands_run}
+
 
     def _write_brocade_zoneset_add(self, switch: dict, zoneset_name: str, zone_names: list) -> dict:
         """cfgabort → cfgadd → cfgsave -f → cfgenable — all on ONE connection."""
@@ -294,10 +359,12 @@ class SANManager:
         actv_r     = self._run(switch, "cfgactvshow")
         active_cfg = self._parse_brocade_active(actv_r.get("output", ""))
 
+        cfgsave_spec = self._cfgsave_spec(switch)
+        cfgsave_key  = self._cfgsave_key(cfgsave_spec)
         cmd_map = {
             "cfgabort":  "cfgabort",
             "cfgadd":    f'cfgadd "{zoneset_name}", "{zones_str}"',
-            "cfgsave -f":"cfgsave -f",
+            cfgsave_key: cfgsave_spec,
         }
         if active_cfg:
             cmd_map[f"cfgenable ({active_cfg})"] = (f'cfgenable "{active_cfg}"', "y")
@@ -310,23 +377,26 @@ class SANManager:
         if any(kw in a_out.lower() for kw in ("error", "invalid", "fail", "not permitted")):
             return {"ok": False, "error": a_out or "cfgadd failed", "commands_run": commands_run}
 
-        cfg_r   = raw.get("cfgsave -f", {})
+        cfg_r   = raw.get(cfgsave_key, {})
         cfg_out = (cfg_r.get("output") or cfg_r.get("stderr") or "").strip()
         cfg_text = (cfg_out + " " + cfg_r.get("error","")).lower()
         cfg_ok = bool(cfg_r.get("ok")) or any(kw in cfg_text for kw in ("updating","done","saved","commit","nothing"))
         if not cfg_ok:
-            return {"ok": False, "error": f"cfgsave -f failed: {cfg_out}", "commands_run": commands_run}
+            return {"ok": False, "error": f"{cfgsave_key} failed: {cfg_out}", "commands_run": commands_run}
 
         return {"ok": True, "output": f"Zones added to '{zoneset_name}' and saved.", "commands_run": commands_run}
+
 
     def _delete_brocade_alias(self, switch: dict, alias_name: str) -> dict:
         """cfgabort → alidelete → cfgsave -f → cfgenable — on ONE connection."""
         actv_r     = self._run(switch, "cfgactvshow")
         active_cfg = self._parse_brocade_active(actv_r.get("output", ""))
+        cfgsave_spec = self._cfgsave_spec(switch)
+        cfgsave_key  = self._cfgsave_key(cfgsave_spec)
         cmd_map = {
             "cfgabort":   "cfgabort",
             "alidelete":  f'alidelete "{alias_name}"',
-            "cfgsave -f": "cfgsave -f",
+            cfgsave_key:  cfgsave_spec,
         }
         if active_cfg:
             cmd_map[f"cfgenable ({active_cfg})"] = (f'cfgenable "{active_cfg}"', "y")
@@ -336,22 +406,25 @@ class SANManager:
         d_out = (dr.get("output") or dr.get("stderr") or dr.get("error") or "").strip()
         if any(kw in d_out.lower() for kw in ("error", "invalid", "not found", "fail", "not permitted")):
             return {"ok": False, "error": d_out or "alidelete failed", "commands_run": commands_run}
-        cfg_r   = raw.get("cfgsave -f", {})
+        cfg_r   = raw.get(cfgsave_key, {})
         cfg_out = (cfg_r.get("output") or cfg_r.get("stderr") or "").strip()
         cfg_text = (cfg_out + " " + cfg_r.get("error","")).lower()
         cfg_ok = bool(cfg_r.get("ok")) or any(kw in cfg_text for kw in ("updating","done","saved","commit","nothing"))
         if not cfg_ok:
-            return {"ok": False, "error": f"cfgsave -f failed: {cfg_out}", "commands_run": commands_run}
+            return {"ok": False, "error": f"{cfgsave_key} failed: {cfg_out}", "commands_run": commands_run}
         return {"ok": True, "output": f"Alias '{alias_name}' deleted and saved.", "commands_run": commands_run}
+
 
     def _delete_brocade_zone(self, switch: dict, zone_name: str) -> dict:
         """cfgabort → zonedelete → cfgsave -f → cfgenable — on ONE connection."""
         actv_r     = self._run(switch, "cfgactvshow")
         active_cfg = self._parse_brocade_active(actv_r.get("output", ""))
+        cfgsave_spec = self._cfgsave_spec(switch)
+        cfgsave_key  = self._cfgsave_key(cfgsave_spec)
         cmd_map = {
             "cfgabort":    "cfgabort",
             "zonedelete":  f'zonedelete "{zone_name}"',
-            "cfgsave -f":  "cfgsave -f",
+            cfgsave_key:   cfgsave_spec,
         }
         if active_cfg:
             cmd_map[f"cfgenable ({active_cfg})"] = (f'cfgenable "{active_cfg}"', "y")
@@ -361,13 +434,14 @@ class SANManager:
         d_out = (dr.get("output") or dr.get("stderr") or dr.get("error") or "").strip()
         if any(kw in d_out.lower() for kw in ("error", "invalid", "not found", "fail", "not permitted")):
             return {"ok": False, "error": d_out or "zonedelete failed", "commands_run": commands_run}
-        cfg_r   = raw.get("cfgsave -f", {})
+        cfg_r   = raw.get(cfgsave_key, {})
         cfg_out = (cfg_r.get("output") or cfg_r.get("stderr") or "").strip()
         cfg_text = (cfg_out + " " + cfg_r.get("error","")).lower()
         cfg_ok = bool(cfg_r.get("ok")) or any(kw in cfg_text for kw in ("updating","done","saved","commit","nothing"))
         if not cfg_ok:
-            return {"ok": False, "error": f"cfgsave -f failed: {cfg_out}", "commands_run": commands_run}
+            return {"ok": False, "error": f"{cfgsave_key} failed: {cfg_out}", "commands_run": commands_run}
         return {"ok": True, "output": f"Zone '{zone_name}' deleted and saved.", "commands_run": commands_run}
+
 
     def _delete_cisco_alias(self, switch: dict, alias_name: str) -> dict:
         lines = ["device-alias database", f"  no device-alias name {alias_name}", "device-alias commit"]
@@ -537,7 +611,9 @@ class SANManager:
         # multi-exec issues, and use separate connections to prevent pager
         # truncation. We also send CTRL-Q / 'q' as stdin to skip any --More-- prompt.
         # On Brocade FOS, piping through a wide terminal avoids the pager entirely.
-        cfg_r = self._run(switch, "cfgshow --all 2>/dev/null || cfgshow")
+        # Legacy models (e.g. 24B) don't support `cfgshow --all`, so pick the
+        # appropriate variant based on the switch model.
+        cfg_r = self._run(switch, self._cfgshow_cmd(switch))
         actv_r = self._run(switch, "cfgactvshow")
 
         raw = {

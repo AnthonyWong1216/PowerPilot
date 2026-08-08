@@ -45,6 +45,19 @@
           <option value="cisco">Cisco (MDS / NX-OS)</option>
         </select>
       </div>
+      <div class="form-group" id="sw-model-group" style="margin-bottom:10px">
+        <label class="label-inline" for="sw-model">Model / Command Set</label>
+        <select id="sw-model" class="input" style="width:100%">
+          <option value="auto">Auto-detect (recommended)</option>
+          <option value="modern">Modern FOS 8.x+ (cfgsave -f, cfgshow --all)</option>
+          <option value="legacy">Legacy FOS 6/7.x — e.g. 24B / 2498 (interactive cfgsave)</option>
+        </select>
+        <span class="muted" style="font-size:11px">
+          Older models such as the 2498-24B don't support <code>cfgsave -f</code>; choose
+          "Legacy" (or leave on Auto — names containing "24B"/"2498" are detected automatically).
+        </span>
+      </div>
+
       <div class="form-group" style="margin-bottom:10px">
         <label class="label-inline" for="sw-user">Username</label>
         <input id="sw-user" class="input" style="width:100%" value="admin">
@@ -87,7 +100,11 @@ async function loadSwitches() {
     <tr>
       <td><strong>${esc(s.name)}</strong></td>
       <td class="muted">${esc(s.host)}</td>
-      <td><span class="badge badge-blue">${esc(s.vendor)}</span></td>
+      <td>
+        <span class="badge badge-blue">${esc(s.vendor)}</span>
+        ${s.model && s.model !== "auto" ? `<span class="badge badge-grey" title="Command set">${esc(s.model)}</span>` : ""}
+      </td>
+
       <td class="muted">${esc(s.username)}</td>
       <td class="muted">${esc(String(s.ssh_port))}</td>
       <td id="conn-${s.id}" class="muted center">
@@ -121,10 +138,20 @@ async function checkConnection(id) {
 
 function esc(s) { return (s||"").replace(/</g,"&lt;").replace(/>/g,"&gt;"); }
 
+function toggleModelGroup() {
+  // Model / command-set selector is only relevant for Brocade FOS switches.
+  const vendor = document.getElementById("sw-vendor").value;
+  const grp = document.getElementById("sw-model-group");
+  if (grp) grp.style.display = (vendor === "brocade") ? "" : "none";
+}
+
 function openAddModal() {
   document.getElementById("sw-result").classList.add("hidden");
+  document.getElementById("sw-model").value = "auto";
+  toggleModelGroup();
   document.getElementById("add-switch-modal").classList.remove("hidden");
 }
+
 function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
 
 async function saveSwitch() {
@@ -133,7 +160,9 @@ async function saveSwitch() {
     name:     document.getElementById("sw-name").value.trim(),
     host:     document.getElementById("sw-host").value.trim(),
     vendor:   document.getElementById("sw-vendor").value,
+    model:    document.getElementById("sw-model").value,
     username: document.getElementById("sw-user").value.trim() || "admin",
+
     ssh_port: document.getElementById("sw-port").value.trim() || "22",
     password: document.getElementById("sw-pass").value,
     key_path: document.getElementById("sw-key").value.trim(),
@@ -177,6 +206,11 @@ async function deleteSwitch(id, name) {
   loadSwitches();
 }
 
-document.addEventListener("DOMContentLoaded", loadSwitches);
+document.addEventListener("DOMContentLoaded", () => {
+  loadSwitches();
+  const v = document.getElementById("sw-vendor");
+  if (v) v.addEventListener("change", toggleModelGroup);
+});
+
 </script>
 {% endblock %}

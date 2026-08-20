@@ -1,0 +1,88 @@
+{% extends "base.html" %}
+{% block title %}Test{% endblock %}
+{% block page_title %}VIOS Resilience Test{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-title">Run Test on Target LPAR</div>
+  <p class="muted">Deploy <code>vios_res_client.sh</code> to a target AIX LPAR, run the resilience test,
+     then automatically download the generated <code>tar.gz</code> into <code>testresult/</code>.</p>
+  <form id="test-form">
+    <div style="display:flex;flex-wrap:wrap;gap:12px;">
+      <label style="flex:1;min-width:180px;">
+        <span class="fld-label">Target LPAR IP / Host</span>
+        <input id="t-host" type="text" required placeholder="10.0.0.20" class="fld">
+      </label>
+      <label style="flex:1;min-width:140px;">
+        <span class="fld-label">Username</span>
+        <input id="t-user" type="text" required value="root" class="fld">
+      </label>
+      <label style="flex:1;min-width:140px;">
+        <span class="fld-label">Password</span>
+        <input id="t-pass" type="password" placeholder="••••••••" class="fld">
+      </label>
+      <label style="width:90px;">
+        <span class="fld-label">Port</span>
+        <input id="t-port" type="number" value="22" class="fld">
+      </label>
+    </div>
+    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;">
+      <label style="flex:1;min-width:160px;">
+        <span class="fld-label">Test Label (VIOS name)</span>
+        <input id="t-label" type="text" required placeholder="vios1" class="fld">
+      </label>
+      <label style="flex:1;min-width:140px;">
+        <span class="fld-label">Mode</span>
+        <select id="t-mode" class="fld">
+          <option value="shutdown">shutdown</option>
+          <option value="restart">restart</option>
+        </select>
+      </label>
+      <label style="width:140px;">
+        <span class="fld-label">Monitor (seconds)</span>
+        <input id="t-secs" type="number" value="180" class="fld">
+      </label>
+      <label style="flex:1;min-width:160px;">
+        <span class="fld-label">Remote Target Dir</span>
+        <input id="t-path" type="text" value="/tmp" class="fld">
+      </label>
+    </div>
+    <div style="margin-top:16px;">
+      <button type="submit" id="t-run" class="btn-accent">Run Test</button>
+      <span id="t-status" class="muted" style="margin-left:12px;"></span>
+    </div>
+  </form>
+  <div id="t-steps" style="margin-top:16px;"></div>
+</div>
+
+<div class="card">
+  <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
+    <span>Test Results</span>
+    <span>
+      <button id="t-refresh" class="btn-plain">Refresh</button>
+      <button id="t-report" class="btn-accent">Generate Report</button>
+    </span>
+  </div>
+  <div id="report-status" class="muted"></div>
+  <h3 style="margin:14px 0 6px;font-size:.95rem;">Result Archives (.tar.gz)</h3>
+  <div id="archives-list" class="muted">Loading…</div>
+  <h3 style="margin:18px 0 6px;font-size:.95rem;">Reports (.docx)</h3>
+  <div id="reports-list" class="muted">—</div>
+</div>
+
+<style>
+  .fld-label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;}
+  .fld{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:4px;box-sizing:border-box;}
+  .btn-accent{padding:8px 16px;border:none;background:var(--accent);color:#fff;border-radius:4px;cursor:pointer;}
+  .btn-accent:disabled{opacity:.6;cursor:not-allowed;}
+  .btn-plain{padding:6px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;}
+  .step-row{padding:8px 11px;border-radius:4px;margin-bottom:8px;font-size:13px;border:1px solid var(--border);}
+  .step-ok{background:#e6f4ea;border-color:#b6dfc2;}
+  .step-fail{background:#fdecea;border-color:#f3c0bb;}
+  .step-out{font-family:monospace;font-size:11px;white-space:pre-wrap;margin-top:6px;max-height:200px;overflow:auto;color:#333;}
+  .res-row{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-bottom:1px solid var(--border);}
+</style>
+{% endblock %}
+
+{% block scripts %}
+<script src="{{ url_for('static', filename='js/test.js') }}"></script>
+{% endblock %}

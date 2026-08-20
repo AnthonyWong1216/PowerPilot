@@ -6,10 +6,14 @@ Flask backend with SSH and HMC REST API support
 import os
 import re
 import json
+import glob
 import logging
+import subprocess
 
-from flask import Flask, render_template, request, jsonify, session
+from flask import (Flask, render_template, request, jsonify, session,
+                   send_from_directory, send_file)
 from flask_socketio import SocketIO, emit
+
 
 from modules.ssh_manager import SSHManager
 from modules.hmc_api import HMCApiClient
@@ -250,6 +254,12 @@ def jobs_page():
 @app.route("/deploy-scripts")
 def deploy_scripts_page():
     return render_template("deploy_scripts.html")
+
+
+@app.route("/test")
+def test_page():
+    return render_template("test.html")
+
 
 
 
@@ -3375,6 +3385,188 @@ def storage_unmap_volume():
 
 
 # ──────────────────────────────────────────────────────────
+# Test operations — VIOS resilience test on a target LPAR
+# ──────────────────────────────────────────────────────────
+#
+# Flow (all driven from the Test GUI page):
+#   1. Deploy the vios_res_client.sh script to the target LPAR (SFTP).
+#   2. Run the test remotely:  vios_res_client.sh test <label> <mode> <secs>
+#      which packages the evidence into /tmp/vios_res_<host>_<ts>.tar.gz.
+#   3. Download that tar.gz into the local testresult/ folder.
+#   4. Generate a consolidated Word report from every result in testresult/.
+#   5. Download the report / individual results.
+# ──────────────────────────────────────────────────────────
+
+TESTRESULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testresult")
+VIOS_RES_SCRIPT = os.path.join(SCRIPTS_DIR, "vios_res_client.sh")
+
+
+@app.route("/api/test/run", methods=["POST"])
+def test_run():
+    """Deploy vios_res_client.sh to a target LPAR, run the resilience test,
+    then download the generated tar.gz into testresult/.
+
+    Body: {host, username, password, port, label, mode (shutdown|restart),
+           seconds, target_path}
+    """
+    data = request.get_json(force=True) or {}
+    host      = (data.get("host") or "").strip()
+    username  = (data.get("username") or "root").strip()
+    password  = data.get("password") or ""
+    label     = (data.get("label") or "").strip() or "test"
+    mode      = (data.get("mode") or "shutdown").strip().lower()
+    target_dir = (data.get("target_path") or "/tmp").strip().rstrip("/") or "/tmp"
+    try:
+        port = int(data.get("port") or 22)
+    except (TypeError, ValueError):
+        port = 22
+    try:
+        seconds = int(data.get("seconds") or 180)
+    except (TypeError, ValueError):
+        seconds = 180
+
+    if not host:
+        return jsonify({"ok": False, "error": "Target host is required"}), 400
+    if mode not in ("shutdown", "restart"):
+        mode = "shutdown"
+    if not os.path.isfile(VIOS_RES_SCRIPT):
+        return jsonify({"ok": False, "error": "vios_res_client.sh not found in scripts/"}), 404
+
+    steps = []
+    remote_script = f"{target_dir}/vios_res_client.sh"
+
+    # ── Step 1: deploy the script ─────────────────────────────
+    dep = ssh_manager.deploy_file(
+        local_path=VIOS_RES_SCRIPT, host=host, port=port,
+        username=username, password=password,
+        target_path=remote_script, method="sftp",
+    )
+    steps.append({"step": 1, "label": "Deploy vios_res_client.sh",
+                  "ok": dep.get("ok", False),
+                  "output": dep.get("message", ""),
+                  "error": dep.get("error", "")})
+    if not dep.get("ok"):
+        return jsonify({"ok": False, "error": f"Deploy failed: {dep.get('error')}",
+                        "steps": steps}), 400
+
+    # ── Step 2: run the test remotely ─────────────────────────
+    # The test packages results into /tmp/vios_res_<host>_<ts>.tar.gz and
+    # prints the tar path. We run it non-interactively; the script's operator
+    # prompts default to reasonable behaviour when stdin is closed.
+    run_cmd = (f'chmod +x "{remote_script}"; '
+               f'yes yes | "{remote_script}" test "{label}" {mode} {seconds}')
+    run = ssh_manager.run_command(
+        host=host, port=port, username=username, password=password,
+        command=run_cmd, timeout=max(seconds + 900, 1200),
+    )
+    steps.append({"step": 2, "label": f"Run test ({mode}, {seconds}s)",
+                  "ok": run.get("ok", False),
+                  "output": (run.get("output") or "")[-4000:],
+                  "error": run.get("error") or run.get("stderr", "")})
+
+    # ── Step 3: find the generated tar.gz and download it ─────
+    # The packaged file is /tmp/vios_res_<hostname>_<ts>.tar.gz. Locate the
+    # newest matching archive on the remote host.
+    find_cmd = "ls -1t /tmp/vios_res_*.tar.gz 2>/dev/null | head -1"
+    found = ssh_manager.run_command(
+        host=host, port=port, username=username, password=password,
+        command=find_cmd, timeout=60,
+    )
+    remote_tar = (found.get("output") or "").strip().splitlines()
+    remote_tar = remote_tar[0].strip() if remote_tar else ""
+    if not remote_tar:
+        steps.append({"step": 3, "label": "Locate result tar.gz", "ok": False,
+                      "output": "", "error": "No vios_res_*.tar.gz found on target"})
+        return jsonify({"ok": False, "error": "Test ran but no tar.gz was produced.",
+                        "steps": steps}), 400
+
+    os.makedirs(TESTRESULT_DIR, exist_ok=True)
+    local_name = os.path.basename(remote_tar)
+    local_tar = os.path.join(TESTRESULT_DIR, local_name)
+    dl = ssh_manager.download_file(
+        host=host, port=port, username=username, password=password,
+        remote_path=remote_tar, local_path=local_tar,
+    )
+    steps.append({"step": 3, "label": "Download result tar.gz",
+                  "ok": dl.get("ok", False),
+                  "output": dl.get("message", ""),
+                  "error": dl.get("error", "")})
+    if not dl.get("ok"):
+        return jsonify({"ok": False, "error": f"Download failed: {dl.get('error')}",
+                        "steps": steps}), 400
+
+    return jsonify({
+        "ok": True,
+        "message": f"Test complete. Results downloaded to testresult/{local_name}",
+        "tar_file": local_name,
+        "steps": steps,
+    })
+
+
+@app.route("/api/test/results", methods=["GET"])
+def test_results():
+    """List downloaded test result archives and any generated reports."""
+    os.makedirs(TESTRESULT_DIR, exist_ok=True)
+    archives = []
+    reports = []
+    for entry in sorted(os.listdir(TESTRESULT_DIR)):
+        full = os.path.join(TESTRESULT_DIR, entry)
+        if not os.path.isfile(full):
+            continue
+        info = {"name": entry, "size": os.path.getsize(full)}
+        if entry.endswith(".tar.gz"):
+            archives.append(info)
+        elif entry.endswith(".docx"):
+            reports.append(info)
+    return jsonify({"ok": True, "archives": archives, "reports": reports})
+
+
+@app.route("/api/test/report", methods=["POST"])
+def test_report():
+    """Generate the consolidated VIOS resilience Word report from every
+    archive/result folder currently in testresult/ (runs generate_vios_report.py)."""
+    report_script = os.path.join(SCRIPTS_DIR, "generate_vios_report.py")
+    if not os.path.isfile(report_script):
+        return jsonify({"ok": False, "error": "generate_vios_report.py not found"}), 404
+    os.makedirs(TESTRESULT_DIR, exist_ok=True)
+    try:
+        proc = subprocess.run(
+            ["python3", report_script],
+            capture_output=True, text=True, timeout=600,
+            cwd=os.path.dirname(os.path.abspath(__file__)),
+        )
+    except subprocess.TimeoutExpired:
+        return jsonify({"ok": False, "error": "Report generation timed out"}), 504
+    except Exception as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+
+    if proc.returncode != 0:
+        return jsonify({"ok": False,
+                        "error": proc.stderr.strip() or proc.stdout.strip()
+                        or "Report generation failed",
+                        "output": proc.stdout}), 400
+
+    report_name = "VIOS_Resilience_Report.docx"
+    return jsonify({
+        "ok": True,
+        "message": "Report generated.",
+        "report": report_name,
+        "output": proc.stdout,
+    })
+
+
+@app.route("/api/test/download/<path:filename>", methods=["GET"])
+def test_download(filename):
+    """Download a result archive or report from the testresult/ folder."""
+    safe_name = os.path.basename(filename)
+    full = os.path.join(TESTRESULT_DIR, safe_name)
+    if not os.path.isfile(full):
+        return jsonify({"ok": False, "error": "File not found"}), 404
+    return send_from_directory(TESTRESULT_DIR, safe_name, as_attachment=True)
+
+
+# ──────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
     socketio.run(app, host="0.0.0.0", port=5001, debug=True)
+

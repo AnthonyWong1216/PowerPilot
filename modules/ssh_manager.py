@@ -608,8 +608,67 @@ class SSHManager:
         except Exception as exc:
             return {"ok": False, "error": f"SFTP upload failed: {exc}"}
 
+    def run_command(self, host, port=22, username="root",
+                    key_path=None, password=None,
+                    command="", timeout=1800) -> dict:
+        """Run a single command on a target server (e.g. an AIX LPAR) with a
+        long timeout, returning stdout/stderr/exit status. Used for running the
+        resilience/benchmark test scripts which can take several minutes."""
+        try:
+            client = self._connect(host, port, username, key_path, password)
+        except paramiko.AuthenticationException:
+            return {"ok": False, "error": "Authentication failed — check username/password"}
+        except Exception as exc:
+            return {"ok": False, "error": f"Connection failed: {exc}"}
+        try:
+            stdin, stdout, stderr = client.exec_command(command, timeout=timeout)
+            out = stdout.read().decode(errors="replace")
+            err = stderr.read().decode(errors="replace")
+            rc = stdout.channel.recv_exit_status()
+            return {"ok": rc == 0, "output": out, "stderr": err, "exit_status": rc}
+        except Exception as exc:
+            return {"ok": False, "error": f"Command failed: {exc}"}
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
+    def download_file(self, host, port=22, username="root",
+                      key_path=None, password=None,
+                      remote_path="", local_path="") -> dict:
+        """Download a file from a remote server via SFTP into local_path.
+
+        Used to pull the packaged test results (vios_res_*.tar.gz) off the
+        target LPAR after a test run so a report can be generated locally.
+        """
+        try:
+            client = self._connect(host, port, username, key_path, password)
+        except paramiko.AuthenticationException:
+            return {"ok": False, "error": "Authentication failed — check username/password"}
+        except Exception as exc:
+            return {"ok": False, "error": f"Connection failed: {exc}"}
+        try:
+            os.makedirs(os.path.dirname(local_path) or ".", exist_ok=True)
+            sftp = client.open_sftp()
+            try:
+                sftp.get(remote_path, local_path)
+            finally:
+                sftp.close()
+            size = os.path.getsize(local_path)
+            return {"ok": True, "local_path": local_path, "size": size,
+                    "message": f"Downloaded {remote_path} ({size} bytes)"}
+        except Exception as exc:
+            return {"ok": False, "error": f"Download failed: {exc}"}
+        finally:
+            try:
+                client.close()
+            except Exception:
+                pass
+
     def _deploy_scp(self, client, local, dest, filename) -> dict:
         """Upload via SCP protocol (scp -t on the remote host)."""
+
         try:
             file_size = os.path.getsize(local)
             transport = client.get_transport()

@@ -3,75 +3,117 @@
 {% block page_title %}VIOS Resilience Test{% endblock %}
 {% block content %}
 <div class="card">
-  <div class="card-title">Run Test on Target LPAR</div>
-  <p class="muted">Deploy <code>vios_res_client.sh</code> to a target AIX LPAR, run the resilience test,
-     then automatically download the generated <code>tar.gz</code> into <code>testresult/</code>.</p>
-  <form id="test-form">
-    <div style="display:flex;flex-wrap:wrap;gap:12px;">
-      <label style="flex:1;min-width:180px;">
-        <span class="fld-label">Target LPAR IP / Host</span>
-        <input id="t-host" type="text" required placeholder="10.0.0.20" class="fld">
-      </label>
-      <label style="flex:1;min-width:140px;">
-        <span class="fld-label">Username</span>
-        <input id="t-user" type="text" required value="root" class="fld">
-      </label>
-      <label style="flex:1;min-width:140px;">
-        <span class="fld-label">Password</span>
-        <input id="t-pass" type="password" placeholder="••••••••" class="fld">
-      </label>
-      <label style="width:90px;">
-        <span class="fld-label">Port</span>
-        <input id="t-port" type="number" value="22" class="fld">
-      </label>
-    </div>
-    <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:12px;">
-      <label style="flex:1;min-width:160px;">
-        <span class="fld-label">Test Label (VIOS name)</span>
-        <input id="t-label" type="text" required placeholder="vios1" class="fld">
-      </label>
-      <label style="flex:1;min-width:140px;">
-        <span class="fld-label">Mode</span>
-        <select id="t-mode" class="fld">
-          <option value="shutdown">shutdown</option>
-          <option value="restart">restart</option>
-        </select>
-      </label>
-      <label style="width:140px;">
-        <span class="fld-label">Monitor (seconds)</span>
-        <input id="t-secs" type="number" value="180" class="fld">
-      </label>
-      <label style="flex:1;min-width:160px;">
-        <span class="fld-label">Remote Target Dir</span>
-        <input id="t-path" type="text" value="/tmp" class="fld">
-      </label>
-    </div>
+  <div class="card-title"><span class="step-icon">📤</span> Step 1 — Deploy Script to Target LPAR</div>
+  <p class="muted">Deploy <code>vios_res_client.sh</code> to a target AIX LPAR via SFTP. The actual
+     VIOS shutdown/restart test must be run <strong>manually</strong> by you in an SSH/console
+     session, since it requires you to trigger the VIOS shutdown/restart on the HMC at the right
+     moment. After deploying, you'll get the exact command to run yourself.</p>
+  <form id="test-form" class="test-form">
+
+    <label class="fld-row">
+      <span class="fld-label">Target LPAR IP / Host</span>
+      <input id="t-host" type="text" required placeholder="10.0.0.20" class="fld">
+    </label>
+    <label class="fld-row">
+      <span class="fld-label">Username</span>
+      <input id="t-user" type="text" required value="root" class="fld">
+    </label>
+    <label class="fld-row">
+      <span class="fld-label">Password</span>
+      <input id="t-pass" type="password" placeholder="••••••••" class="fld">
+    </label>
+    <label class="fld-row">
+      <span class="fld-label">Port</span>
+      <input id="t-port" type="number" value="22" class="fld">
+    </label>
+    <label class="fld-row">
+      <span class="fld-label">Test Label (VIOS name)</span>
+      <input id="t-label" type="text" required placeholder="vios1" class="fld">
+    </label>
+    <label class="fld-row">
+      <span class="fld-label">Mode</span>
+      <select id="t-mode" class="fld">
+        <option value="shutdown">shutdown</option>
+        <option value="restart">restart</option>
+      </select>
+    </label>
+    <label class="fld-row">
+      <span class="fld-label">Monitor (seconds)</span>
+      <input id="t-secs" type="number" value="180" class="fld">
+    </label>
+    <label class="fld-row">
+      <span class="fld-label">Remote Target Dir</span>
+      <input id="t-path" type="text" value="/tmp" class="fld">
+    </label>
     <div style="margin-top:16px;">
-      <button type="submit" id="t-run" class="btn-accent">Run Test</button>
+      <button type="submit" id="t-run" class="btn-accent">Deploy Script</button>
       <span id="t-status" class="muted" style="margin-left:12px;"></span>
     </div>
   </form>
   <div id="t-steps" style="margin-top:16px;"></div>
+
+  <div id="t-manual" style="display:none;margin-top:16px;padding:14px 16px;
+       border:1px solid var(--border);border-radius:6px;background:#fffbe6;">
+    <div style="font-weight:600;margin-bottom:8px;"><span class="step-icon">🖥️</span> Step 2 — Run the test manually on the LPAR</div>
+
+    <p class="muted" style="margin:0 0 8px;">
+      Open an SSH session or console to the target LPAR, then run the command below.
+      When the script prints <code>&gt;&gt;&gt; SHUT DOWN/RESTART THE TARGET VIOS NOW &lt;&lt;&lt;</code>,
+      go trigger that VIOS shutdown/restart manually from the HMC.
+      Wait for the script to finish and package the results (<code>tar.gz</code>) before
+      clicking "Fetch Results" below.
+    </p>
+    <div style="display:flex;gap:8px;align-items:flex-start;">
+      <code id="t-manual-cmd" style="display:block;flex:1;background:#222;color:#e8e8e8;
+            padding:10px 12px;border-radius:4px;font-size:12.5px;white-space:pre-wrap;
+            word-break:break-all;"></code>
+      <button type="button" id="t-copy-cmd" class="btn-plain" style="white-space:nowrap;">Copy</button>
+    </div>
+  </div>
+
+  <div id="t-fetch-section" style="display:none;margin-top:16px;">
+    <div style="font-weight:600;margin-bottom:8px;"><span class="step-icon">📥</span> Step 3 — Fetch Results</div>
+
+    <p class="muted" style="margin:0 0 8px;">
+      Once the manual test run has completed on the LPAR, click below to locate the newest
+      <code>vios_res_*.tar.gz</code> on the target host and download it into <code>testresult/</code>.
+    </p>
+    <button type="button" id="t-fetch" class="btn-accent">Fetch Results</button>
+    <span id="t-fetch-status" class="muted" style="margin-left:12px;"></span>
+    <div id="t-fetch-steps" style="margin-top:12px;"></div>
+  </div>
 </div>
+
 
 <div class="card">
   <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
     <span>Test Results</span>
-    <span>
-      <button id="t-refresh" class="btn-plain">Refresh</button>
-      <button id="t-report" class="btn-accent">Generate Report</button>
-    </span>
+    <button id="t-refresh" class="btn-plain">Refresh</button>
   </div>
   <div id="report-status" class="muted"></div>
-  <h3 style="margin:14px 0 6px;font-size:.95rem;">Result Archives (.tar.gz)</h3>
+
+  <h3 style="margin:14px 0 6px;font-size:.95rem;">Downloaded Tarball Results (.tar.gz)</h3>
+  <p class="muted" style="margin:0 0 8px;font-size:12.5px;">
+    Archives fetched from a target LPAR after a test run. Click <strong>Generate Report</strong>
+    beside an archive to build the consolidated Word report from every archive currently here.
+  </p>
   <div id="archives-list" class="muted">Loading…</div>
+
   <h3 style="margin:18px 0 6px;font-size:.95rem;">Reports (.docx)</h3>
   <div id="reports-list" class="muted">—</div>
 </div>
 
+
 <style>
+  /* One field per row: label on the left, input on the right, neatly aligned. */
+  .test-form{max-width:560px;}
+  .fld-row{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
+  .fld-row .fld-label{flex:0 0 170px;margin-bottom:0;text-align:right;}
+  .fld-row .fld{flex:1;}
   .fld-label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;}
   .fld{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:4px;box-sizing:border-box;}
+  .step-icon{display:inline-block;margin-right:6px;font-size:1.05em;}
+
   .btn-accent{padding:8px 16px;border:none;background:var(--accent);color:#fff;border-radius:4px;cursor:pointer;}
   .btn-accent:disabled{opacity:.6;cursor:not-allowed;}
   .btn-plain{padding:6px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;}

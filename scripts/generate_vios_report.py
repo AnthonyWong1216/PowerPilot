@@ -147,6 +147,96 @@ def parse_vios_ping_entries(content):
     return entries
 
 
+def parse_vios_log_events(log_content):
+    """Parse vios_res_client.log for the operator-confirmed VIOS DOWN/UP times.
+
+    The client script (vios_res_client.sh) does NOT ping the VIOS itself to
+    detect up/down (the VIOS management IP may not be pingable). Instead the
+    operator confirms interactively, and the script logs it, e.g.:
+        [2026-08-21 11:56:03] [INFO] Operator confirmed VIOS is DOWN. ...
+        [2026-08-21 12:02:18] [INFO] Operator confirmed VIOS is UP again. ...
+
+    This is the authoritative, always-present source for the VIOS Status
+    Timeline (down_time / up_time), since the older ping-based
+    "monitor_vios_ping_*.txt" log is no longer produced by the client script.
+
+    Returns (down_time, up_time) as "HH:MM:SS" strings, or (None, None) if
+    not found in the log.
+    """
+    down_time = None
+    up_time = None
+    ts_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2}:\d{2}))\]')
+
+    for line in log_content.split('\n'):
+        m = ts_re.match(line)
+        if not m:
+            continue
+        ts_time = m.group(2)
+        if 'Operator confirmed VIOS is DOWN' in line and down_time is None:
+            down_time = ts_time
+        if 'Operator confirmed VIOS is UP' in line:
+            up_time = ts_time
+
+    return down_time, up_time
+
+
+# Log lines from vios_res_client.log that represent a meaningful VIOS
+# status-timeline milestone (used to build the "VIOS Status Timeline" table
+# when the older ping-based monitor_vios_ping_*.txt file is not present).
+_VIOS_TIMELINE_MARKERS = [
+    ("TEST '", 'START', "Test started"),
+    ('Operator confirmed VIOS is DOWN', 'DOWN', 'VIOS confirmed DOWN by operator'),
+    ('Operator confirmed VIOS is UP', 'UP', 'VIOS confirmed UP by operator'),
+    ('recovery confirmed by lspath', 'RECOVERED', 'MPIO paths recovered (lspath)'),
+    ('Paths recovered after chpath', 'RECOVERED', 'MPIO paths recovered (chpath)'),
+    ('Recovery capture complete', 'DONE', 'Recovery evidence captured'),
+    ("TEST '", 'DONE', "Test complete"),
+]
+
+
+def parse_vios_log_timeline(log_content):
+    """Build a simple status-timeline event list from vios_res_client.log.
+
+    Returns a list of dicts: {'time': 'HH:MM:SS', 'vios_name': '', 'status':
+    'DOWN'/'UP'/etc, 'detail': <log message>} suitable for rendering in the
+    "VIOS Status Timeline" table, mirroring the shape of
+    parse_vios_ping_entries() output.
+    """
+    events = []
+    ts_re = re.compile(r'^\[(\d{4}-\d{2}-\d{2}\s+(\d{2}:\d{2}:\d{2}))\]\s*\[(\w+)\]\s*(.*)$')
+
+    for line in log_content.split('\n'):
+        m = ts_re.match(line)
+        if not m:
+            continue
+        ts_time = m.group(2)
+        message = m.group(4).strip()
+
+        status = None
+        if 'Operator confirmed VIOS is DOWN' in message:
+            status = 'DOWN'
+        elif 'Operator confirmed VIOS is UP' in message:
+            status = 'UP'
+        elif 'recovery confirmed by lspath' in message or 'Paths recovered after chpath' in message:
+            status = 'RECOVERED'
+        elif message.startswith("=== TEST") and 'START' in message:
+            status = 'TEST START'
+        elif message.startswith("=== TEST") and 'DONE' in message:
+            status = 'TEST DONE'
+
+        if status:
+            events.append({
+                'time': ts_time,
+                'vios_name': '',
+                'status': status,
+                'detail': message,
+            })
+
+    return events
+
+
+
+
 def extract_snapshot_sections(content):
     """Extract sections from a snapshot file, returning list of (purpose, data) tuples."""
     sections = []
@@ -532,14 +622,38 @@ def parse_test_dir(test_dir):
     disk_monitor_file = glob.glob(os.path.join(test_dir, "monitor_disk_*.txt"))
     ping_monitor_file = glob.glob(os.path.join(test_dir, "monitor_ping_*.txt"))
     vios_ping_file = glob.glob(os.path.join(test_dir, "monitor_vios_ping_*.txt"))
+    client_log_file = glob.glob(os.path.join(test_dir, "vios_res_client.log"))
     snapshot_before_files = glob.glob(os.path.join(test_dir, "snapshot_*_before_*.txt"))
-    snapshot_during_files = glob.glob(os.path.join(test_dir, "snapshot_*_during_*.txt"))
-    snapshot_after_files = glob.glob(os.path.join(test_dir, "snapshot_*_after_*.txt"))
+
+    # The "during" (VIOS DOWN / paths Failed) evidence file name differs by
+    # test mode:
+    #   - restart mode: snapshot_<label>_during_restart_<ts>.txt
+    #   - shutdown mode: snapshot_<label>_after_shutdown_<ts>.txt  (this is
+    #       actually captured WHILE the VIOS is down - see vios_res_client.sh
+    #       f_test shutdown branch - despite the "after" in its filename).
+    # The "after" (VIOS recovered) evidence file is always the *_after_restart_
+    # snapshot for BOTH modes (shutdown mode also captures this once the
+    # operator confirms the VIOS is back up). We must NOT let a naive
+    # "snapshot_*_after_*.txt" glob match both after_shutdown and
+    # after_restart non-deterministically.
+    snapshot_during_files = glob.glob(os.path.join(test_dir, "snapshot_*_during_restart_*.txt"))
+    if not snapshot_during_files:
+        snapshot_during_files = glob.glob(os.path.join(test_dir, "snapshot_*_after_shutdown_*.txt"))
+
+    snapshot_after_files = glob.glob(os.path.join(test_dir, "snapshot_*_after_restart_*.txt"))
+    if not snapshot_after_files:
+        # Fallback for older/edge-case runs that only have an after_shutdown
+        # snapshot and no after_restart (e.g. operator never confirmed VIOS
+        # back up). Exclude anything already used as the "during" snapshot.
+        candidates = glob.glob(os.path.join(test_dir, "snapshot_*_after_*.txt"))
+        snapshot_after_files = [f for f in candidates if f not in snapshot_during_files]
+
     
     inventory_content = read_file_content(inventory_file[0]) if inventory_file else ""
     disk_monitor_content = read_file_content(disk_monitor_file[0]) if disk_monitor_file else ""
     ping_monitor_content = read_file_content(ping_monitor_file[0]) if ping_monitor_file else ""
     vios_ping_content = read_file_content(vios_ping_file[0]) if vios_ping_file else ""
+    client_log_content = read_file_content(client_log_file[0]) if client_log_file else ""
     
     inv_info = parse_inventory(inventory_content)
     hostname = inv_info.get('hostname', 'Unknown')
@@ -548,7 +662,23 @@ def parse_test_dir(test_dir):
     ping_entries = parse_monitor_entries(ping_monitor_content)
     vios_ping_entries = parse_vios_ping_entries(vios_ping_content)
     
-    down_time, up_time = determine_time_phases(vios_ping_entries)
+    # Determine VIOS down/up times. The current vios_res_client.sh does NOT
+    # ping the VIOS itself (it may not be pingable) - the operator confirms
+    # state interactively and it is recorded in vios_res_client.log. Prefer
+    # that log-based timestamp; fall back to the older ping-based log if
+    # present (older test runs / different tooling).
+    down_time, up_time = parse_vios_log_events(client_log_content)
+    if not down_time and not up_time:
+        down_time, up_time = determine_time_phases(vios_ping_entries)
+
+    # If there is no ping-based VIOS timeline (current client script does not
+    # produce monitor_vios_ping_*.txt), build the timeline table rows from the
+    # vios_res_client.log operator-confirmation events instead, so the "VIOS
+    # Status Timeline" table/section is never empty when the log has data.
+    if not vios_ping_entries:
+        vios_ping_entries = parse_vios_log_timeline(client_log_content)
+
+
     
     ping_before, ping_during, ping_after = classify_monitor_by_phase(ping_entries, down_time, up_time)
     disk_before, disk_during, disk_after = classify_monitor_by_phase(disk_entries, down_time, up_time)

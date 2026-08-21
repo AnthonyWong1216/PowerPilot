@@ -3401,10 +3401,15 @@ TESTRESULT_DIR = os.path.join(os.path.dirname(os.path.abspath(__file__)), "testr
 VIOS_RES_SCRIPT = os.path.join(SCRIPTS_DIR, "vios_res_client.sh")
 
 
-@app.route("/api/test/run", methods=["POST"])
-def test_run():
-    """Deploy vios_res_client.sh to a target LPAR, run the resilience test,
-    then download the generated tar.gz into testresult/.
+@app.route("/api/test/deploy", methods=["POST"])
+def test_deploy():
+    """Deploy vios_res_client.sh to a target LPAR via SFTP.
+
+    The actual test run (which requires an operator to shut down/restart the
+    VIOS on the HMC at the right moment) must be run manually by the user in
+    an SSH/console session — this route only pushes the script and returns
+    the exact command the user should run themselves, plus the target dir so
+    the "Fetch Results" step later knows where to look.
 
     Body: {host, username, password, port, label, mode (shutdown|restart),
            seconds, target_path}
@@ -3449,24 +3454,45 @@ def test_run():
         return jsonify({"ok": False, "error": f"Deploy failed: {dep.get('error')}",
                         "steps": steps}), 400
 
-    # ── Step 2: run the test remotely ─────────────────────────
-    # The test packages results into /tmp/vios_res_<host>_<ts>.tar.gz and
-    # prints the tar path. We run it non-interactively; the script's operator
-    # prompts default to reasonable behaviour when stdin is closed.
-    run_cmd = (f'chmod +x "{remote_script}"; '
-               f'yes yes | "{remote_script}" test "{label}" {mode} {seconds}')
-    run = ssh_manager.run_command(
-        host=host, port=port, username=username, password=password,
-        command=run_cmd, timeout=max(seconds + 900, 1200),
-    )
-    steps.append({"step": 2, "label": f"Run test ({mode}, {seconds}s)",
-                  "ok": run.get("ok", False),
-                  "output": (run.get("output") or "")[-4000:],
-                  "error": run.get("error") or run.get("stderr", "")})
+    # Build the exact command the operator should run manually on the LPAR
+    # (via SSH/console) once they are ready to perform the VIOS shutdown or
+    # restart at the correct moment.
+    manual_cmd = (f'cd "{target_dir}" && chmod +x vios_res_client.sh && '
+                  f'./vios_res_client.sh test "{label}" {mode} {seconds}')
 
-    # ── Step 3: find the generated tar.gz and download it ─────
-    # The packaged file is /tmp/vios_res_<hostname>_<ts>.tar.gz. Locate the
-    # newest matching archive on the remote host.
+    return jsonify({
+        "ok": True,
+        "message": "Script deployed. Run the command below manually on the target LPAR.",
+        "steps": steps,
+        "manual_command": manual_cmd,
+        "target_dir": target_dir,
+        "mode": mode,
+    })
+
+
+@app.route("/api/test/fetch", methods=["POST"])
+def test_fetch():
+    """Locate the newest vios_res_*.tar.gz on the target host and download it
+    into testresult/. Call this AFTER the manual test run (deploy step) has
+    completed on the LPAR.
+
+    Body: {host, username, password, port}
+    """
+    data = request.get_json(force=True) or {}
+    host      = (data.get("host") or "").strip()
+    username  = (data.get("username") or "root").strip()
+    password  = data.get("password") or ""
+    try:
+        port = int(data.get("port") or 22)
+    except (TypeError, ValueError):
+        port = 22
+
+    if not host:
+        return jsonify({"ok": False, "error": "Target host is required"}), 400
+
+    steps = []
+
+    # ── Step: find the generated tar.gz on the remote host ────
     find_cmd = "ls -1t /tmp/vios_res_*.tar.gz 2>/dev/null | head -1"
     found = ssh_manager.run_command(
         host=host, port=port, username=username, password=password,
@@ -3475,11 +3501,14 @@ def test_run():
     remote_tar = (found.get("output") or "").strip().splitlines()
     remote_tar = remote_tar[0].strip() if remote_tar else ""
     if not remote_tar:
-        steps.append({"step": 3, "label": "Locate result tar.gz", "ok": False,
+        steps.append({"step": 1, "label": "Locate result tar.gz", "ok": False,
                       "output": "", "error": "No vios_res_*.tar.gz found on target"})
-        return jsonify({"ok": False, "error": "Test ran but no tar.gz was produced.",
-                        "steps": steps}), 400
+        return jsonify({"ok": False, "error": "No tar.gz found on target. "
+                        "Has the manual test run completed?", "steps": steps}), 400
+    steps.append({"step": 1, "label": "Locate result tar.gz", "ok": True,
+                  "output": remote_tar, "error": ""})
 
+    # ── Step: download it ──────────────────────────────────────
     os.makedirs(TESTRESULT_DIR, exist_ok=True)
     local_name = os.path.basename(remote_tar)
     local_tar = os.path.join(TESTRESULT_DIR, local_name)
@@ -3487,7 +3516,7 @@ def test_run():
         host=host, port=port, username=username, password=password,
         remote_path=remote_tar, local_path=local_tar,
     )
-    steps.append({"step": 3, "label": "Download result tar.gz",
+    steps.append({"step": 2, "label": "Download result tar.gz",
                   "ok": dl.get("ok", False),
                   "output": dl.get("message", ""),
                   "error": dl.get("error", "")})
@@ -3497,7 +3526,7 @@ def test_run():
 
     return jsonify({
         "ok": True,
-        "message": f"Test complete. Results downloaded to testresult/{local_name}",
+        "message": f"Results downloaded to testresult/{local_name}",
         "tar_file": local_name,
         "steps": steps,
     })
@@ -3563,6 +3592,32 @@ def test_download(filename):
     if not os.path.isfile(full):
         return jsonify({"ok": False, "error": "File not found"}), 404
     return send_from_directory(TESTRESULT_DIR, safe_name, as_attachment=True)
+
+
+@app.route("/api/test/delete/<path:filename>", methods=["DELETE"])
+def test_delete(filename):
+    """Delete a result archive (.tar.gz) or report (.docx) from testresult/.
+
+    Only files directly inside TESTRESULT_DIR are removable (basename-only,
+    no path traversal). If the file is a .tar.gz archive, its already-extracted
+    sibling folder (same name minus .tar.gz) is removed too, if present.
+    """
+    safe_name = os.path.basename(filename)
+    full = os.path.join(TESTRESULT_DIR, safe_name)
+    if not os.path.isfile(full):
+        return jsonify({"ok": False, "error": "File not found"}), 404
+    try:
+        os.remove(full)
+        # Clean up the extracted directory that matches a deleted archive.
+        if safe_name.endswith(".tar.gz"):
+            extracted_dir = os.path.join(TESTRESULT_DIR, safe_name[:-len(".tar.gz")])
+            if os.path.isdir(extracted_dir):
+                import shutil
+                shutil.rmtree(extracted_dir, ignore_errors=True)
+    except OSError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 500
+    return jsonify({"ok": True, "message": f"Deleted {safe_name}"})
+
 
 
 # ──────────────────────────────────────────────────────────

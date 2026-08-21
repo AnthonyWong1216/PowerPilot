@@ -1,0 +1,8 @@
+# Force Unix (LF) line endings for remote-executed scripts, regardless of the
+# developer's OS or core.autocrlf setting. These files are deployed via SFTP
+# and executed directly on AIX/VIOS LPARs — CRLF line endings corrupt the
+# shebang line (e.g. "#!/usr/bin/ksh\r") and cause the interpreter lookup to
+# fail with errors like: "ksh: /tmp/script.sh:  not found."
+scripts/*.sh   text eol=lf
+scripts/*.pl   text eol=lf
+scripts/*.py   text eol=lf

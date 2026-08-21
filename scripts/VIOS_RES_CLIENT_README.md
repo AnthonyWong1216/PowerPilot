@@ -34,9 +34,21 @@ At the end, everything is bundled into a single tar: `/tmp/vios_res_<hostname>_<
 
 1. Discovers devices
 2. Takes **before** snapshot: `snapshot_vios1_before_shutdown_<ts>.txt`
-3. Monitors for 180 seconds (you shut down the VIOS during this window)
-4. Takes **after** snapshot: `snapshot_vios1_after_shutdown_<ts>.txt`
-5. Packages results
+3. **Immediately prompts**: "Have you shut down the VIOS and is it DOWN already?"
+   - Go to the HMC and shut down the VIOS, then answer `yes`. The script will keep
+     re-asking until you confirm (no fixed wait beforehand).
+4. As soon as you confirm `yes`, it **immediately captures down-state evidence**:
+   - `cfgmgr` + I/O probe to force the dead FC/vSCSI path to `Failed`
+   - a short ping + disk I/O monitor burst (`<seconds>`) to log the impact
+   - **after** snapshot: `snapshot_vios1_after_shutdown_<ts>.txt`
+5. **Immediately prompts**: "Has the VIOS been started up and is it UP again?"
+   - Go to the HMC and start the VIOS back up, then answer `yes`.
+6. As soon as you confirm `yes`, it captures recovery evidence:
+   - `errpt` + `lspath` (+ `chpath` if paths are still `Failed`)
+   - **after-restart** snapshot: `snapshot_vios1_after_restart_<ts>.txt`
+7. Packages results into a `.tar.gz` and tells you to download it via the
+   PowerPilot GUI ("Fetch Results" on the Test page).
+
 
 ### Restart mode (`test <label> restart [seconds]`)
 
@@ -190,7 +202,7 @@ This lets you pinpoint exactly which network was affected and for how long.
 
 ## Typical Test Workflows
 
-### Workflow 1: VIOS Shutdown Test (VIOS stays down)
+### Workflow 1: VIOS Shutdown Test (immediate confirm-driven flow)
 
 ```bash
 # 1. Setup multi-network targets (first time only)
@@ -198,10 +210,16 @@ This lets you pinpoint exactly which network was affected and for how long.
 
 # 2. Run the full shutdown test
 ./vios_res_client.sh test vios1 shutdown 180
-#    -> When you see ">>> SHUT DOWN THE TARGET VIOS NOW <<<", shut down VIOS1 from the HMC.
-#    -> Wait 180s for monitoring to complete.
-#    -> After-snapshot captured automatically.
+#    -> Script prompts immediately: "Have you shut down the VIOS and is it DOWN already?"
+#    -> Go to the HMC, shut down VIOS1, then answer 'yes'.
+#    -> Script immediately captures down-state evidence (cfgmgr/lspath + <seconds> monitor burst
+#       + after_shutdown snapshot) - no fixed wait beforehand.
+#    -> Script prompts: "Has the VIOS been started up and is it UP again?"
+#    -> Go to the HMC, start VIOS1 back up, then answer 'yes'.
+#    -> Script captures recovery evidence (errpt/lspath/chpath + after_restart snapshot),
+#       packages the results into a .tar.gz, and tells you to download it via the GUI.
 ```
+
 
 ### Workflow 2: VIOS Restart Test (VIOS comes back up)
 

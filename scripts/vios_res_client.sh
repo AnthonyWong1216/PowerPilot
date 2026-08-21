@@ -710,7 +710,9 @@ function f_snapshot {
 # logging timestamped results. Detects packet loss and I/O stalls during failover.
 function f_monitor {
     v_secs="$1"
+    v_msg="$2"
     [[ -z "${v_secs}" ]] && v_secs=120
+    [[ -z "${v_msg}" ]] && v_msg="Now trigger the VIOS shutdown/restart from the HMC while this runs..."
     f_ensure_dirs
 
     [[ -z "${v_ping_target}" ]] && v_ping_target=$(f_detect_ping_target)
@@ -727,7 +729,8 @@ function f_monitor {
     v_multinet_log="${v_basedir}/monitor_multinet_${v_run_ts}.txt"
 
     f_log "INFO" "Monitoring for ${v_secs}s. Ping target: ${v_ping_target}"
-    echo "Now trigger the VIOS shutdown/restart from the HMC while this runs..."
+    echo "${v_msg}"
+
 
     # --- background continuous ping (1/sec, timestamped) ---
     (
@@ -1080,24 +1083,45 @@ function f_test {
 
     echo ""
     if [[ "${v_mode}" == "shutdown" ]]; then
-        echo ">>> Starting ${v_secs}s monitor. SHUT DOWN THE TARGET VIOS NOW when ready. <<<"
-        f_monitor "${v_secs}"
-        # The VIOS may not be pingable, so we confirm it is down by asking the operator
-        # rather than by pinging it.
+        # --- NEW FLOW ---
+        # 1) Ask FIRST whether the VIOS has already been shut down from the HMC.
+        # 2) Once confirmed, immediately capture the "down" evidence (force path
+        #    detect + after_shutdown snapshot) - no fixed monitor wait beforehand.
+        # 3) Then ask whether the VIOS has been started back up.
+        # 4) Once confirmed, capture the "after restart" evidence, then package
+        #    the results and tell the operator to download via the GUI.
+        echo ">>> Go to the HMC now and SHUT DOWN the target VIOS. <<<"
         echo ""
-        if f_prompt_yes "Have you shut down the VIOS and is it DOWN already?"; then
-            f_log "INFO" "Operator confirmed VIOS is DOWN."
-        else
-            f_log "WARN" "Operator did not confirm VIOS down; capturing current state anyway."
-        fi
+        while ! f_prompt_yes "Have you shut down the VIOS and is it DOWN already?"; do
+            echo "    Waiting for you to shut down the VIOS from the HMC..."
+        done
+        f_log "INFO" "Operator confirmed VIOS is DOWN. Capturing evidence now..."
+
+        echo ""
+        echo "Capturing status/log now (this will take a short while)..."
         # Force AIX to notice the failed FC/vSCSI path (cfgmgr + I/O) then lspath,
         # so the after snapshot clearly shows the Failed path.
-        echo ""
-        echo "Forcing path re-detection (cfgmgr + I/O) so lspath shows the Failed path..."
         f_force_path_detect "${v_basedir}/after_shutdown_pathdetect_${v_run_ts}.txt"
+        # Short monitor burst to capture ping/disk impact evidence while VIOS is down.
+        f_monitor "${v_secs}" "Capturing ping + disk I/O evidence while VIOS is DOWN..."
         # After snapshot named: snapshot_<vios_name>_after_shutdown_<timestamp>.txt
         f_snapshot "${v_label}_after_shutdown"
+        f_log "INFO" "Down-state capture complete."
 
+        echo ""
+        echo "Down-state capture complete."
+        echo ">>> Now go to the HMC and START UP the VIOS again. <<<"
+        echo ""
+        while ! f_prompt_yes "Has the VIOS been started up and is it UP again?"; do
+            echo "    Waiting for you to start the VIOS from the HMC..."
+        done
+        f_log "INFO" "Operator confirmed VIOS is UP again. Capturing recovery evidence now..."
+
+        echo ""
+        echo "Capturing recovery status/log now..."
+        f_verify_recovery "${v_basedir}/after_restart_recovery_${v_run_ts}.txt"
+        f_snapshot "${v_label}_after_restart"
+        f_log "INFO" "Recovery capture complete."
 
     elif [[ "${v_mode}" == "restart" ]]; then
         echo ">>> Starting ${v_secs}s monitor. RESTART THE TARGET VIOS NOW when ready. <<<"
@@ -1112,13 +1136,16 @@ function f_test {
     echo ""
     echo "All evidence saved under: ${v_basedir}"
     if [[ "${v_mode}" == "shutdown" ]]; then
-        echo "Compare snapshot_${v_label}_before_shutdown_* vs snapshot_${v_label}_after_shutdown_* for path/state changes."
+        echo "Compare snapshot_${v_label}_after_shutdown_* vs snapshot_${v_label}_after_restart_* for path/state changes."
     else
         echo "Compare snapshot_${v_label}_before_restart_* vs snapshot_${v_label}_after_restart_* for path/state changes."
     fi
     # auto-package everything into one tar for easy transfer / reporting
     f_package
+    echo ""
+    echo ">>> Test complete. Download the packaged .tar.gz file above from the PowerPilot GUI (Fetch Results). <<<"
 }
+
 
 
 #-----------------------------#
@@ -1201,17 +1228,23 @@ function f_usage {
     echo ""
     echo "Test modes (VIOS state is confirmed by YOU, not by ping - the VIOS may"
     echo "not be pingable):"
-    echo "  shutdown - Monitor for <seconds>. You are then asked 'is the VIOS down?'."
-    echo "             The script runs cfgmgr + a small I/O probe to force AIX to mark"
-    echo "             the dead FC/vSCSI path Failed, runs lspath, then captures the"
-    echo "             after-snapshot."
-    echo "             Snapshot name: snapshot_<label>_after_shutdown_<timestamp>.txt"
+    echo "  shutdown - Immediately asks 'have you shut down the VIOS?'. As soon as you"
+    echo "             confirm 'yes', it captures the down-state evidence right away"
+    echo "             (cfgmgr + I/O probe to mark the dead path Failed, a short"
+    echo "             ping/disk monitor burst of <seconds>, then the after_shutdown"
+    echo "             snapshot). It then asks 'has the VIOS been started up again?'."
+    echo "             As soon as you confirm 'yes', it captures the recovery evidence"
+    echo "             (errpt/lspath/chpath + after_restart snapshot), packages the"
+    echo "             results, and tells you to download the .tar.gz from the GUI."
+    echo "             Snapshots: snapshot_<label>_after_shutdown_<timestamp>.txt"
+    echo "                        snapshot_<label>_after_restart_<timestamp>.txt"
     echo "  restart  - Monitor for <seconds>. You confirm when the VIOS is DOWN"
     echo "             (cfgmgr + lspath -> 'during' snapshot), then confirm when it is"
     echo "             UP again. On recovery the script checks errpt for path-recovery"
     echo "             entries and lspath, and runs chpath to re-enable any still-Failed"
     echo "             paths, then captures the after-snapshot."
     echo "             Snapshot name: snapshot_<label>_after_restart_<timestamp>.txt"
+
 
     echo ""
     echo "Adapter location codes / virtual slots:"

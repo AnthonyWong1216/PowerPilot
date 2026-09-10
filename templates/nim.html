@@ -1,0 +1,338 @@
+{% extends "base.html" %}
+{% block title %}NIM Management{% endblock %}
+{% block page_title %}NIM Management{% endblock %}
+
+{% block head_extra %}
+<style>
+.nim-overview { display:none; }
+/* collapsible sections — matches storage.html pattern */
+.nim-sec { background:#f8f9fa; border-radius:8px; border:1px solid var(--border); margin-bottom:14px; overflow:hidden; }
+.nim-sec-hdr {
+  display:flex; align-items:center; gap:10px; padding:10px 16px;
+  background:#f8f9fa; cursor:pointer; user-select:none;
+  border-bottom:2px solid var(--accent); transition:background .15s;
+}
+.nim-sec-hdr:hover { background:#eef0f3; }
+.nim-sec-hdr::before { content:""; display:inline-block; width:4px; height:16px; background:var(--accent); border-radius:2px; flex-shrink:0; }
+.nim-sec-title { font-size:.85rem; font-weight:800; text-transform:uppercase; letter-spacing:.5px; color:var(--text); white-space:nowrap; }
+.nim-sec-count { background:var(--accent); color:#fff; font-size:10px; padding:1px 7px; border-radius:10px; font-weight:600; }
+.nim-sec-chevron { margin-left:auto; font-size:12px; color:var(--muted); transition:transform .2s; }
+.nim-sec-chevron.open { transform:rotate(180deg); }
+.nim-sec-body { display:none; padding:0; background:#fff; border-top:1px solid var(--border); }
+.nim-sec-body.open { display:block; }
+/* master banner */
+.nim-master { background:linear-gradient(135deg,#1a1d23 60%,#2c5fcc); color:#fff; border-radius:var(--radius); padding:16px 20px; margin-bottom:14px; }
+.nim-master h3 { margin:0 0 8px; font-size:16px; }
+.nim-master-kv { display:grid; grid-template-columns:repeat(auto-fill,minmax(160px,1fr)); gap:6px 20px; font-size:12px; }
+.nim-master-kv .k { color:#8b949e; }
+.nim-master-kv .v { color:#fff; font-weight:600; }
+/* resource name link in tables */
+.nim-res-link { color:var(--accent); font-weight:600; cursor:pointer; background:none; border:none; padding:0; text-align:left; font-size:inherit; }
+.nim-res-link:hover { text-decoration:underline; }
+/* state badges */
+.nim-st { display:inline-block; font-size:10px; font-weight:600; padding:1px 7px; border-radius:10px; }
+.nim-st-ok { background:var(--green-bg); color:var(--green); }
+.nim-st-warn { background:var(--orange-bg); color:var(--orange); }
+.nim-st-info { background:var(--blue-bg); color:var(--blue-text); }
+</style>
+{% endblock %}
+
+{% block content %}
+<div class="toolbar">
+  <button class="btn btn-primary" onclick="openAddServerModal()">+ Add NIM Server</button>
+  <button class="btn btn-secondary" onclick="openAddClientModal()">+ Add NIM Client</button>
+  <button class="btn btn-secondary" onclick="refreshAll()">↻ Refresh</button>
+</div>
+
+<!-- NIM SERVERS -->
+<div class="card">
+  <div class="card-title">NIM Servers</div>
+  <table class="data-table"><thead><tr><th>Name</th><th>Host / IP</th><th>User</th><th>Port</th><th>Status</th><th>Actions</th></tr></thead>
+    <tbody id="server-tbody"><tr><td colspan="6" class="muted center">No NIM servers registered</td></tr></tbody></table>
+</div>
+
+<!-- NIM CLIENTS (registered) -->
+<div class="card mt-2">
+  <div class="card-title">NIM Clients (Registered)</div>
+  <table class="data-table"><thead><tr><th>Name</th><th>Host / IP</th><th>NIM Server</th><th>Notes</th><th>Actions</th></tr></thead>
+    <tbody id="client-tbody"><tr><td colspan="5" class="muted center">No NIM clients registered</td></tr></tbody></table>
+</div>
+
+<!-- NIM ENVIRONMENT -->
+<div class="nim-overview" id="nim-overview">
+  <div class="card mt-2">
+    <div class="card-title" id="overview-title">NIM Environment Overview</div>
+    <div id="overview-content"><p class="muted">Loading…</p></div>
+  </div>
+</div>
+
+<!-- DETAIL MODAL -->
+<div class="modal-overlay hidden" id="detail-modal">
+  <div class="modal" style="max-width:640px">
+    <div class="modal-header"><span id="detail-modal-title">Detail</span><button class="modal-close" onclick="closeModal('detail-modal')">✕</button></div>
+    <div class="modal-body"><div id="detail-modal-body"></div></div>
+  </div>
+</div>
+<!-- ADD SERVER MODAL -->
+<div class="modal-overlay hidden" id="add-server-modal">
+  <div class="modal">
+    <div class="modal-header"><span>Add NIM Server</span><button class="modal-close" onclick="closeModal('add-server-modal')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Name</label><input id="ns-name" class="input" style="width:100%" placeholder="nim-master-01"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Host / IP</label><input id="ns-host" class="input" style="width:100%" placeholder="10.0.0.50"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Username</label><input id="ns-user" class="input" style="width:100%" value="root"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">SSH Port</label><input id="ns-port" class="input" style="width:100%" value="22"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Password</label><input id="ns-pass" type="password" class="input" style="width:100%" placeholder="(leave blank for SSH key)"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">SSH Key Path</label><input id="ns-key" class="input" style="width:100%" placeholder="~/.ssh/id_rsa"></div>
+      <div class="form-group"><label class="label-inline">Notes</label><input id="ns-notes" class="input" style="width:100%" placeholder="Optional"></div>
+      <div id="ns-result" class="result-box hidden" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveServer()">Save</button><button class="btn btn-secondary" onclick="closeModal('add-server-modal')">Cancel</button></div>
+  </div>
+</div>
+<!-- ADD CLIENT MODAL -->
+<div class="modal-overlay hidden" id="add-client-modal">
+  <div class="modal">
+    <div class="modal-header"><span>Add NIM Client</span><button class="modal-close" onclick="closeModal('add-client-modal')">✕</button></div>
+    <div class="modal-body">
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Client Name</label><input id="nc-name" class="input" style="width:100%" placeholder="aix-lpar-01"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Host / IP</label><input id="nc-host" class="input" style="width:100%" placeholder="10.0.0.60"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">NIM Server</label><select id="nc-server" class="input" style="width:100%"><option value="">— Select —</option></select></div>
+      <div class="form-group"><label class="label-inline">Notes</label><input id="nc-notes" class="input" style="width:100%" placeholder="Optional"></div>
+      <div id="nc-result" class="result-box hidden" style="margin-top:10px"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-primary" onclick="saveClient()">Save</button><button class="btn btn-secondary" onclick="closeModal('add-client-modal')">Cancel</button></div>
+  </div>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+let _servers = [];
+let _selectedServerId = null;
+let _nimData = null;
+
+function esc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
+function fmtList(v) { return Array.isArray(v) ? v.map(esc).join(", ") : esc(v||"—"); }
+function stBadge(v) {
+  if(!v) return "";
+  const l=(v+"").toLowerCase();
+  if(l.includes("ready")||l.includes("running")||l.includes("success")) return `<span class="nim-st nim-st-ok">${esc(v)}</span>`;
+  if(l.includes("unavail")||l.includes("not running")||l.includes("missing")) return `<span class="nim-st nim-st-warn">${esc(v)}</span>`;
+  return `<span class="nim-st nim-st-info">${esc(v)}</span>`;
+}
+
+/* ── Load Servers ────────────────────────────────────── */
+async function loadServers() {
+  const tb=document.getElementById("server-tbody");
+  tb.innerHTML='<tr><td colspan="6" class="muted center">Loading…</td></tr>';
+  try {
+    _servers=await fetch("/api/nim/servers").then(r=>r.json());
+    if(!_servers.length){tb.innerHTML='<tr><td colspan="6" class="muted center">No NIM servers registered</td></tr>';return;}
+    tb.innerHTML=_servers.map(s=>`<tr>
+      <td><strong>${esc(s.name)}</strong></td><td>${esc(s.host)}</td><td>${esc(s.username||"root")}</td><td>${s.ssh_port||22}</td>
+      <td id="conn-${s.id}"><span class="muted">—</span></td>
+      <td>
+        <button class="btn btn-sm btn-secondary" onclick="testServer('${s.id}')">Test</button>
+        <button class="btn btn-sm btn-primary" onclick="browseEnv('${s.id}','${esc(s.name)}')">Browse</button>
+        <button class="btn btn-sm btn-secondary" style="color:var(--red)" onclick="deleteServer('${s.id}','${esc(s.name)}')">✕</button>
+      </td></tr>`).join("");
+    if(_servers.length===1) browseEnv(_servers[0].id,_servers[0].name);
+  } catch(e){tb.innerHTML=`<tr><td colspan="6" class="error-text">${esc(e.message)}</td></tr>`;}
+}
+
+/* ── Load Clients ────────────────────────────────────── */
+async function loadClients() {
+  const tb=document.getElementById("client-tbody");
+  tb.innerHTML='<tr><td colspan="5" class="muted center">Loading…</td></tr>';
+  try {
+    const cl=await fetch("/api/nim/clients").then(r=>r.json());
+    if(!cl.length){tb.innerHTML='<tr><td colspan="5" class="muted center">No NIM clients registered</td></tr>';return;}
+    tb.innerHTML=cl.map(c=>{const s=_servers.find(x=>x.id===c.server_id);return`<tr>
+      <td><strong>${esc(c.name)}</strong></td><td>${esc(c.host||"—")}</td><td>${esc(s?s.name:"—")}</td><td>${esc(c.notes||"—")}</td>
+      <td><button class="btn btn-sm btn-secondary" style="color:var(--red)" onclick="deleteClient('${c.id}','${esc(c.name)}')">✕</button></td></tr>`;}).join("");
+  } catch(e){tb.innerHTML=`<tr><td colspan="5" class="error-text">${esc(e.message)}</td></tr>`;}
+}
+
+/* ── Browse NIM Environment ───────────────────────────── */
+async function browseEnv(serverId, serverName) {
+  _selectedServerId = serverId;
+  const panel = document.getElementById("nim-overview");
+  panel.style.display = "block";
+  document.getElementById("overview-title").textContent = "NIM Environment — " + serverName;
+  const co = document.getElementById("overview-content");
+  co.innerHTML = '<p class="muted"><span class="spinner" style="display:inline-block;width:14px;height:14px;vertical-align:middle;margin-right:6px"></span> Loading (lsnim -l) …</p>';
+  try {
+    const d = await fetch(`/api/nim/servers/${serverId}/resources`).then(r=>r.json());
+    if (!d.ok) { co.innerHTML=`<p class="error-text">${esc(d.error)}</p>`; return; }
+    _nimData = d.data;
+    co.innerHTML = renderEnv(d.data);
+  } catch(e) { co.innerHTML=`<p class="error-text">Error: ${esc(e.message)}</p>`; }
+}
+
+function toggleSec(id) {
+  const body = document.getElementById("body-"+id);
+  const chev = document.getElementById("chev-"+id);
+  if (!body) return;
+  body.classList.toggle("open");
+  if (chev) chev.classList.toggle("open");
+}
+
+function renderEnv(cats) {
+  let h = "";
+  // Master banner
+  const masters = cats.master || [];
+  if (masters.length) {
+    const m = masters[0], a = m.attrs||{};
+    const serves = a.serves ? (Array.isArray(a.serves)?a.serves:[a.serves]) : [];
+    h += `<div class="nim-master"><h3>⬡ NIM Master: ${esc(m.name)}</h3><div class="nim-master-kv">
+      <div><span class="k">Platform</span><br><span class="v">${esc(m.platform||"—")}</span></div>
+      <div><span class="k">Kernel</span><br><span class="v">${esc(m.netboot_kernel||"—")}-bit</span></div>
+      <div><span class="k">CPU ID</span><br><span class="v">${esc(m.cpuid||"—")}</span></div>
+      <div><span class="k">Cstate</span><br><span class="v">${esc(m.Cstate||"—")}</span></div>
+      <div><span class="k">Mstate</span><br><span class="v">${esc(m.Mstate||"—")}</span></div>
+      <div><span class="k">Serves</span><br><span class="v">${serves.length} resource${serves.length!==1?"s":""}</span></div>
+    </div></div>`;
+  }
+  // Category sections
+  const secs = [
+    { key:"spot",       label:"SPOT Resources",          cols:["Name","OS Level","Version","Location","State","Updated"] },
+    { key:"lpp_source", label:"LPP Sources",             cols:["Name","Arch","Location","State","Updated"] },
+    { key:"mksysb",     label:"mksysb Backup Images",    cols:["Name","OS Level","Location","State","Updated"] },
+    { key:"standalone", label:"NIM Clients (standalone)", cols:["Name","Connect","Platform","Cstate","Mstate"] },
+    { key:"networks",   label:"Networks",                cols:["Name","Net Address","Subnet Mask","State"] },
+    { key:"other",      label:"Other Resources",         cols:["Name","Type","Class","State","Location"] },
+  ];
+  for (const s of secs) {
+    const items = cats[s.key] || [];
+    const open = items.length > 0 ? " open" : "";
+    h += `<div class="nim-sec">
+      <div class="nim-sec-hdr" onclick="toggleSec('${s.key}')">
+        <span class="nim-sec-title">${s.label}</span>
+        <span class="nim-sec-count">${items.length}</span>
+        <span class="nim-sec-chevron${open}" id="chev-${s.key}">▼</span>
+      </div>
+      <div class="nim-sec-body${open}" id="body-${s.key}">`;
+    if (!items.length) { h += `<p class="muted" style="padding:14px 18px;margin:0">None</p>`; }
+    else { h += secTable(s, items); }
+    h += `</div></div>`;
+  }
+  return h;
+}
+
+function secTable(sec, items) {
+  let h = '<table class="data-table" style="margin:0"><thead><tr>';
+  for (const c of sec.cols) h += `<th>${c}</th>`;
+  h += "</tr></thead><tbody>";
+  for (const obj of items) {
+    h += "<tr>";
+    const a = obj.attrs || {};
+    if (sec.key === "spot") {
+      h += `<td><button class="nim-res-link" onclick="showDetail('${esc(obj.name)}')">${esc(obj.name)}</button></td>`;
+      h += `<td>${esc(obj.oslevel_s||obj.oslevel_r||"—")}</td>`;
+      h += `<td>${esc((obj.version||"")+"."+(obj.release||"")+"."+(obj.mod||""))}</td>`;
+      h += `<td>${esc(a.location||"—")}</td>`;
+      h += `<td>${stBadge(obj.Rstate)}</td>`;
+      h += `<td>${esc(obj.date_updated||"—")}</td>`;
+    } else if (sec.key === "lpp_source") {
+      h += `<td><button class="nim-res-link" onclick="showDetail('${esc(obj.name)}')">${esc(obj.name)}</button></td>`;
+      h += `<td>${esc(obj.arch||"—")}</td>`;
+      h += `<td>${esc(a.location||"—")}</td>`;
+      h += `<td>${stBadge(obj.Rstate)}</td>`;
+      h += `<td>${esc(obj.date_updated||"—")}</td>`;
+    } else if (sec.key === "mksysb") {
+      h += `<td><button class="nim-res-link" onclick="showDetail('${esc(obj.name)}')">${esc(obj.name)}</button></td>`;
+      h += `<td>${esc(obj.oslevel_s||obj.oslevel_r||"—")}</td>`;
+      h += `<td>${esc(a.location||"—")}</td>`;
+      h += `<td>${stBadge(obj.Rstate)}</td>`;
+      h += `<td>${esc(obj.date_updated||"—")}</td>`;
+    } else if (sec.key === "standalone") {
+      h += `<td><button class="nim-res-link" onclick="showDetail('${esc(obj.name)}')">${esc(obj.name)}</button></td>`;
+      h += `<td>${esc(obj.connect||"—")}</td>`;
+      h += `<td>${esc(obj.platform||"—")}</td>`;
+      h += `<td>${stBadge(obj.Cstate)}</td>`;
+      h += `<td>${stBadge(obj.Mstate)}</td>`;
+    } else if (sec.key === "networks") {
+      h += `<td><button class="nim-res-link" onclick="showDetail('${esc(obj.name)}')">${esc(obj.name)}</button></td>`;
+      h += `<td>${esc(obj.net_addr||"—")}</td>`;
+      h += `<td>${esc(obj.snm||"—")}</td>`;
+      h += `<td>${stBadge(obj.Nstate)}</td>`;
+    } else {
+      h += `<td><button class="nim-res-link" onclick="showDetail('${esc(obj.name)}')">${esc(obj.name)}</button></td>`;
+      h += `<td>${esc(obj.type||"—")}</td>`;
+      h += `<td>${esc(obj["class"]||"—")}</td>`;
+      h += `<td>${stBadge(obj.Rstate||"")}</td>`;
+      h += `<td>${esc(a.location||"—")}</td>`;
+    }
+    h += "</tr>";
+  }
+  h += "</tbody></table>";
+  return h;
+}
+
+/* ── Show detail modal (click item name) ─────────────── */
+async function showDetail(resName) {
+  if (!_selectedServerId) return;
+  document.getElementById("detail-modal-title").textContent = resName;
+  const body = document.getElementById("detail-modal-body");
+  body.innerHTML = '<p class="muted">Loading…</p>';
+  document.getElementById("detail-modal").classList.remove("hidden");
+  try {
+    const d = await fetch(`/api/nim/servers/${_selectedServerId}/resources/${encodeURIComponent(resName)}`).then(r=>r.json());
+    if (!d.ok) { body.innerHTML=`<p class="error-text">${esc(d.error)}</p>`; return; }
+    const attrs = d.data.attrs || {};
+    const keys = Object.keys(attrs);
+    if (!keys.length) { body.innerHTML='<p class="muted">No attributes returned.</p>'; return; }
+    let h='<table class="data-table"><thead><tr><th>Attribute</th><th>Value</th></tr></thead><tbody>';
+    for (const k of keys) h+=`<tr><td style="font-weight:600">${esc(k)}</td><td>${fmtList(attrs[k])}</td></tr>`;
+    body.innerHTML = h+"</tbody></table>";
+  } catch(e) { body.innerHTML=`<p class="error-text">${esc(e.message)}</p>`; }
+}
+
+/* ── Server actions ──────────────────────────────────── */
+async function testServer(id) {
+  showToast("Testing SSH…");
+  const c = document.getElementById("conn-"+id);
+  if (c) c.innerHTML='<span class="muted">⋯</span>';
+  try {
+    const d = await fetch(`/api/nim/servers/${id}/test`,{method:"POST"}).then(r=>r.json());
+    if (d.ok) { showToast("✓ Connected","success"); if(c) c.innerHTML='<span style="color:var(--green);font-weight:600">✔ ok</span>'; }
+    else { showToast("✗ "+(d.error||"Failed"),"error"); if(c) c.innerHTML='<span style="color:var(--red)">✘</span>'; }
+  } catch(e) { if(c) c.innerHTML='<span style="color:var(--red)">✘</span>'; }
+}
+async function deleteServer(id,n) { if(!confirm(`Delete NIM server "${n}"?\nAll clients removed too.`))return; await fetch(`/api/nim/servers/${id}`,{method:"DELETE"}); refreshAll(); }
+async function deleteClient(id,n) { if(!confirm(`Remove NIM client "${n}"?`))return; await fetch(`/api/nim/clients/${id}`,{method:"DELETE"}); loadClients(); }
+
+/* ── Save Server ─────────────────────────────────────── */
+function openAddServerModal() { document.getElementById("ns-result").classList.add("hidden"); document.getElementById("add-server-modal").classList.remove("hidden"); }
+async function saveServer() {
+  const res=document.getElementById("ns-result");
+  const p={name:document.getElementById("ns-name").value.trim(),host:document.getElementById("ns-host").value.trim(),
+    username:document.getElementById("ns-user").value.trim()||"root",ssh_port:document.getElementById("ns-port").value.trim()||"22",
+    password:document.getElementById("ns-pass").value,key_path:document.getElementById("ns-key").value.trim(),notes:document.getElementById("ns-notes").value.trim()};
+  if(!p.name||!p.host){res.className="result-box error";res.textContent="Name and Host required";res.classList.remove("hidden");return;}
+  const r=await fetch("/api/nim/servers",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+  if(r.ok){closeModal("add-server-modal");refreshAll();}else{const d=await r.json();res.className="result-box error";res.textContent="✗ "+(d.error||"Failed");res.classList.remove("hidden");}
+}
+/* ── Save Client ─────────────────────────────────────── */
+function openAddClientModal() {
+  document.getElementById("nc-result").classList.add("hidden");
+  const sel=document.getElementById("nc-server");
+  sel.innerHTML='<option value="">— Select —</option>'+_servers.map(s=>`<option value="${s.id}">${esc(s.name)} (${esc(s.host)})</option>`).join("");
+  document.getElementById("add-client-modal").classList.remove("hidden");
+}
+async function saveClient() {
+  const res=document.getElementById("nc-result");
+  const p={name:document.getElementById("nc-name").value.trim(),host:document.getElementById("nc-host").value.trim(),
+    server_id:document.getElementById("nc-server").value,notes:document.getElementById("nc-notes").value.trim()};
+  if(!p.name||!p.server_id){res.className="result-box error";res.textContent="Name and NIM Server required";res.classList.remove("hidden");return;}
+  const r=await fetch("/api/nim/clients",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+  if(r.ok){closeModal("add-client-modal");loadClients();}else{const d=await r.json();res.className="result-box error";res.textContent="✗ "+(d.error||"Failed");res.classList.remove("hidden");}
+}
+
+/* ── Init ────────────────────────────────────────────── */
+async function refreshAll() { await loadServers(); await loadClients(); }
+document.addEventListener("DOMContentLoaded", () => { refreshAll(); });
+</script>
+{% endblock %}

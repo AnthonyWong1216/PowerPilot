@@ -63,6 +63,12 @@
     VFC Management
   </a>
 
+  <div class="nav-section-label">NIM</div>
+  <a href="/nim" class="nav-item {% if request.path=='/nim' %}active{% endif %}">
+    <svg viewBox="0 0 16 16"><path d="M2 2h5v5H2V2zm7 0h5v5H9V2zM2 9h5v5H2V9zm7 0h5v5H9V9zM3 3v3h3V3H3zm7 0v3h3V3h-3zM3 10v3h3v-3H3zm7 0v3h3v-3h-3z"/></svg>
+    NIM Management
+  </a>
+
   <div class="nav-section-label">Operations</div>
 
   <a href="/jobs" class="nav-item {% if request.path=='/jobs' %}active{% endif %}">
@@ -92,7 +98,7 @@
     <button id="sidebar-toggle" aria-label="Toggle sidebar">&#9776;</button>
     <h1 class="page-title">{% block page_title %}{% endblock %}</h1>
     <div class="topbar-right">
-      {% if request.path not in ['/vfc-map', '/zoning', '/san-switches', '/storage'] %}
+      {% if request.path not in ['/vfc-map', '/zoning', '/san-switches', '/storage', '/nim'] %}
       <select id="hmc-selector" title="Active HMC"></select>
       {% endif %}
     </div>

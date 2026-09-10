@@ -21,6 +21,7 @@ from modules.hmc_store import HMCStore
 from modules.san_store import SANStore
 from modules.san_manager import SANManager
 from modules.storage_store import StorageStore
+from modules.nim_store import NIMStore
 
 
 
@@ -36,6 +37,7 @@ hmc_store = HMCStore()
 san_store = SANStore()
 san_manager = SANManager(ssh_manager)
 storage_store = StorageStore()
+nim_store = NIMStore()
 
 
 
@@ -276,6 +278,11 @@ def zoning_page():
 @app.route("/vfc-map")
 def vfc_map_page():
     return render_template("vfc_map.html")
+
+
+@app.route("/nim")
+def nim_page():
+    return render_template("nim.html")
 
 
 
@@ -3618,6 +3625,253 @@ def test_delete(filename):
         return jsonify({"ok": False, "error": str(exc)}), 500
     return jsonify({"ok": True, "message": f"Deleted {safe_name}"})
 
+
+# ──────────────────────────────────────────────────────────
+# NIM Management API
+# ──────────────────────────────────────────────────────────
+
+# ── NIM Servers CRUD ──────────────────────────────────────
+
+@app.route("/api/nim/servers", methods=["GET"])
+def nim_list_servers():
+    """Return all saved NIM servers (passwords stripped)."""
+    return jsonify(nim_store.list_servers())
+
+
+@app.route("/api/nim/servers", methods=["POST"])
+def nim_add_server():
+    """Save a new NIM server entry."""
+    data = request.get_json(force=True)
+    required = ["name", "host"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+    entry = nim_store.add_server(data)
+    return jsonify(entry), 201
+
+
+@app.route("/api/nim/servers/<server_id>", methods=["DELETE"])
+def nim_delete_server(server_id):
+    """Delete a NIM server and all its associated clients."""
+    nim_store.remove_server(server_id)
+    return jsonify({"ok": True})
+
+
+@app.route("/api/nim/servers/<server_id>/test", methods=["POST"])
+def nim_test_server(server_id):
+    """Test SSH connectivity to a NIM server."""
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"error": "NIM server not found"}), 404
+    result = ssh_manager.test_connection(
+        host=srv["host"],
+        port=int(srv.get("ssh_port", 22)),
+        username=srv.get("username", "root"),
+        key_path=srv.get("key_path") or None,
+        password=srv.get("password") or None,
+    )
+    return jsonify(result)
+
+
+# ── NIM Clients CRUD ─────────────────────────────────────
+
+@app.route("/api/nim/clients", methods=["GET"])
+def nim_list_clients():
+    """Return all NIM clients, optionally filtered by ?server_id=."""
+    server_id = request.args.get("server_id")
+    return jsonify(nim_store.list_clients(server_id=server_id))
+
+
+@app.route("/api/nim/clients", methods=["POST"])
+def nim_add_client():
+    """Register a NIM client."""
+    data = request.get_json(force=True)
+    required = ["name", "server_id"]
+    missing = [f for f in required if not data.get(f)]
+    if missing:
+        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
+    entry = nim_store.add_client(data)
+    return jsonify(entry), 201
+
+
+@app.route("/api/nim/clients/<client_id>", methods=["DELETE"])
+def nim_delete_client(client_id):
+    nim_store.remove_client(client_id)
+    return jsonify({"ok": True})
+
+
+# ── NIM Resources (read from server via SSH) ──────────────
+
+@app.route("/api/nim/servers/<server_id>/resources", methods=["GET"])
+def nim_server_resources(server_id):
+    """Return the full NIM environment parsed from `lsnim -l`.
+
+    Categorised into: master, spot, lpp_source, mksysb,
+    standalone (clients), networks, and other.
+    Optional query param ?type= filters to a single category.
+    """
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+
+    cmd = "lsnim -l"
+    result = ssh_manager.run_command(
+        host=srv["host"],
+        port=int(srv.get("ssh_port", 22)),
+        username=srv.get("username", "root"),
+        key_path=srv.get("key_path") or None,
+        password=srv.get("password") or None,
+        command=cmd,
+        timeout=60,
+    )
+
+    # lsnim may exit non-zero but still produce valid output — accept it
+    output = result.get("output", "")
+    if not output and not result.get("ok"):
+        err = result.get("error") or result.get("stderr") or "SSH command failed"
+        logger.error("NIM lsnim -l failed: %s", err)
+        return jsonify({"ok": False, "error": str(err)})
+
+    objects = _parse_lsnim_stanzas(output)
+
+    categories = {
+        "master": [], "spot": [], "lpp_source": [], "mksysb": [],
+        "standalone": [], "networks": [], "other": [],
+    }
+    for obj in objects:
+        otype = obj.get("type", "")
+        oclass = obj.get("class", "")
+        if otype == "master":
+            categories["master"].append(obj)
+        elif otype == "spot":
+            categories["spot"].append(obj)
+        elif otype == "lpp_source":
+            categories["lpp_source"].append(obj)
+        elif otype == "mksysb":
+            categories["mksysb"].append(obj)
+        elif otype == "standalone":
+            categories["standalone"].append(obj)
+        elif oclass == "networks" or otype == "ent":
+            categories["networks"].append(obj)
+        else:
+            categories["other"].append(obj)
+
+    res_type = request.args.get("type", "").strip().lower()
+    if res_type and res_type in categories:
+        categories = {res_type: categories[res_type]}
+
+    return jsonify({"ok": True, "data": categories})
+
+
+@app.route("/api/nim/servers/<server_id>/resources/<path:resource_name>",
+           methods=["GET"])
+def nim_resource_detail(server_id, resource_name):
+    """Show details for a single NIM resource (lsnim -l <name>)."""
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+
+    cmd = f"lsnim -l {resource_name}"
+    result = ssh_manager.run_command(
+        host=srv["host"],
+        port=int(srv.get("ssh_port", 22)),
+        username=srv.get("username", "root"),
+        key_path=srv.get("key_path") or None,
+        password=srv.get("password") or None,
+        command=cmd,
+        timeout=30,
+    )
+
+    output = result.get("output", "")
+    if not output and not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error") or result.get("stderr") or "SSH failed"})
+
+    objects = _parse_lsnim_stanzas(output)
+    if objects:
+        return jsonify({"ok": True, "data": objects[0]})
+    return jsonify({"ok": True, "data": {"name": resource_name, "attrs": {}}})
+
+
+@app.route("/api/nim/servers/<server_id>/nim-clients", methods=["GET"])
+def nim_server_nim_clients(server_id):
+    """List NIM client machines defined on the NIM server."""
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+
+    cmd = "lsnim -l -t standalone"
+    result = ssh_manager.run_command(
+        host=srv["host"],
+        port=int(srv.get("ssh_port", 22)),
+        username=srv.get("username", "root"),
+        key_path=srv.get("key_path") or None,
+        password=srv.get("password") or None,
+        command=cmd,
+        timeout=30,
+    )
+
+    output = result.get("output", "")
+    if not output and not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error") or result.get("stderr") or "SSH failed"})
+
+    clients = _parse_lsnim_stanzas(output)
+    return jsonify({"ok": True, "data": clients})
+
+
+# ── NIM output parsers ───────────────────────────────────
+
+def _parse_lsnim_stanzas(text: str) -> list:
+    """Parse multi-stanza `lsnim -l` output.
+
+    Each NIM object is a stanza:
+        object_name:
+           key   = value
+           key   = value
+    Repeated keys are collected into lists.
+    """
+    objects = []
+    current_name = None
+    current_attrs: dict = {}
+
+    def _flush():
+        if current_name is None:
+            return
+        obj = {"name": current_name, "attrs": current_attrs}
+        for key in ("class", "type", "Rstate", "Mstate", "Cstate",
+                     "location", "version", "release", "mod",
+                     "oslevel_r", "oslevel_s", "server",
+                     "alloc_count", "date_updated", "platform",
+                     "netboot_kernel", "connect", "cpuid",
+                     "net_addr", "snm", "Nstate", "arch",
+                     "bos_license", "simages", "comments",
+                     "prev_state", "Cstate_result", "Rstate_result"):
+            val = current_attrs.get(key)
+            if val is not None:
+                obj[key] = val
+        objects.append(obj)
+
+    for line in text.splitlines():
+        if line and not line[0].isspace() and line.rstrip().endswith(":"):
+            _flush()
+            current_name = line.rstrip().rstrip(":")
+            current_attrs = {}
+            continue
+        stripped = line.strip()
+        if "=" in stripped and current_name is not None:
+            key, _, val = stripped.partition("=")
+            key = key.strip()
+            val = val.strip()
+            if key in current_attrs:
+                existing = current_attrs[key]
+                if isinstance(existing, list):
+                    existing.append(val)
+                else:
+                    current_attrs[key] = [existing, val]
+            else:
+                current_attrs[key] = val
+
+    _flush()
+    return objects
 
 
 # ──────────────────────────────────────────────────────────

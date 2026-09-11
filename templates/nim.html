@@ -34,6 +34,24 @@
 .nim-st-ok { background:var(--green-bg); color:var(--green); }
 .nim-st-warn { background:var(--orange-bg); color:var(--orange); }
 .nim-st-info { background:var(--blue-bg); color:var(--blue-text); }
+/* client registration wizard */
+.nim-wizard-progress { display:flex; align-items:center; margin:0 0 18px; }
+.nim-wizard-step { display:flex; align-items:center; gap:6px; color:var(--muted); font-size:12px; font-weight:600; white-space:nowrap; }
+.nim-wizard-step::before { content:attr(data-step); display:inline-flex; align-items:center; justify-content:center; width:20px; height:20px; border:1px solid var(--border); border-radius:50%; background:var(--surface); font-size:11px; }
+.nim-wizard-step.active, .nim-wizard-step.done { color:var(--accent); }
+.nim-wizard-step.active::before, .nim-wizard-step.done::before { background:var(--accent); border-color:var(--accent); color:#fff; }
+.nim-wizard-line { height:1px; flex:1; background:var(--border); margin:0 8px; }
+.nim-wizard-page { display:none; }
+.nim-wizard-page.active { display:block; }
+.nim-wizard-help { color:var(--muted); font-size:12px; margin:-4px 0 15px; }
+.nim-wizard-summary { background:var(--bg); border:1px solid var(--border); border-radius:var(--radius); padding:12px; font-size:13px; }
+.nim-wizard-summary dt { color:var(--muted); float:left; clear:left; width:110px; }
+.nim-wizard-summary dd { font-weight:600; margin:0 0 6px 115px; }
+.nim-command-preview { background:#1e1e1e; color:#d4d4d4; border-radius:4px; padding:9px; font:11px/1.5 ui-monospace,Consolas,monospace; white-space:pre-wrap; word-break:break-all; }
+.nim-execution-step { border-left:3px solid var(--border); padding:7px 10px; margin:8px 0; background:var(--bg); font-size:12px; }
+.nim-execution-step.ok { border-left-color:var(--green); }
+.nim-execution-step.error { border-left-color:var(--red); }
+.nim-delete-client { display:inline-flex; align-items:center; justify-content:center; min-width:34px; font-family:inherit; font-size:13px; font-weight:600; }
 </style>
 {% endblock %}
 
@@ -51,13 +69,6 @@
     <tbody id="server-tbody"><tr><td colspan="6" class="muted center">No NIM servers registered</td></tr></tbody></table>
 </div>
 
-<!-- NIM CLIENTS (registered) -->
-<div class="card mt-2">
-  <div class="card-title">NIM Clients (Registered)</div>
-  <table class="data-table"><thead><tr><th>Name</th><th>Host / IP</th><th>NIM Server</th><th>Notes</th><th>Actions</th></tr></thead>
-    <tbody id="client-tbody"><tr><td colspan="5" class="muted center">No NIM clients registered</td></tr></tbody></table>
-</div>
-
 <!-- NIM ENVIRONMENT -->
 <div class="nim-overview" id="nim-overview">
   <div class="card mt-2">
@@ -66,6 +77,29 @@
   </div>
 </div>
 
+<!-- CREATE MKSYSB MODAL -->
+<div class="modal-overlay hidden" id="mksysb-modal">
+  <div class="modal" style="max-width:720px">
+    <div class="modal-header"><span>Create NIM mksysb Backup</span><button class="modal-close" onclick="closeModal('mksysb-modal')">✕</button></div>
+    <div class="modal-body">
+      <p class="nim-wizard-help">The NIM master creates and stores an installable rootvg image. Preflight is read-only and estimates required master storage from allocated rootvg partitions plus a 15% margin. This does not back up non-rootvg volume groups, raw devices, or paging spaces.</p>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-server">NIM Server</label><select id="mb-server" class="input" style="width:100%"><option value="">— Select a NIM server —</option></select></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-client-name">NIM Client Name</label><input id="mb-client-name" class="input" style="width:100%" placeholder="client01"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-client-host">AIX Client Host / IP</label><input id="mb-client-host" class="input" style="width:100%" placeholder="client01 or 10.0.0.21"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-resource-name">mksysb Resource Name</label><input id="mb-resource-name" class="input" style="width:100%" placeholder="client01_mksysb"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-location">Master Backup Directory</label><input id="mb-location" class="input" style="width:100%" placeholder="/export/nim/mksysb"></div>
+      <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
+        <strong style="font-size:13px">Temporary AIX Client SSH Credentials</strong><span class="muted" style="font-size:12px"> — used only for this request; never saved</span>
+        <div class="form-row" style="display:flex;gap:10px;margin-top:10px"><div class="form-group" style="flex:1"><label class="label-inline" for="mb-user">Username</label><input id="mb-user" class="input" style="width:100%" value="root"></div><div class="form-group" style="width:120px"><label class="label-inline" for="mb-port">SSH Port</label><input id="mb-port" class="input" style="width:100%" value="22"></div></div>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-pass">Password</label><input id="mb-pass" type="password" class="input" style="width:100%" placeholder="Leave blank for SSH key"></div>
+        <div class="form-group"><label class="label-inline" for="mb-key">SSH Key Path</label><input id="mb-key" class="input" style="width:100%" placeholder="~/.ssh/id_rsa"></div>
+      </div>
+      <div id="mb-result" class="result-box" style="margin-top:14px">Enter the details, then run the required preflight checks.</div>
+      <div id="mb-execution-result" style="margin-top:12px"></div>
+    </div>
+    <div class="modal-footer"><button class="btn btn-secondary" onclick="runMksysbPreflight()">Run Preflight</button><button class="btn btn-primary" id="mb-create" onclick="createMksysb()" disabled>Create mksysb Backup</button><button class="btn btn-secondary" onclick="closeModal('mksysb-modal')">Cancel</button></div>
+  </div>
+</div>
 <!-- DETAIL MODAL -->
 <div class="modal-overlay hidden" id="detail-modal">
   <div class="modal" style="max-width:640px">
@@ -93,15 +127,59 @@
 <!-- ADD CLIENT MODAL -->
 <div class="modal-overlay hidden" id="add-client-modal">
   <div class="modal">
-    <div class="modal-header"><span>Add NIM Client</span><button class="modal-close" onclick="closeModal('add-client-modal')">✕</button></div>
+    <div class="modal-header"><span>Add NIM Client</span><button class="modal-close" onclick="closeClientWizard()">✕</button></div>
     <div class="modal-body">
-      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Client Name</label><input id="nc-name" class="input" style="width:100%" placeholder="aix-lpar-01"></div>
-      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">Host / IP</label><input id="nc-host" class="input" style="width:100%" placeholder="10.0.0.60"></div>
-      <div class="form-group" style="margin-bottom:10px"><label class="label-inline">NIM Server</label><select id="nc-server" class="input" style="width:100%"><option value="">— Select —</option></select></div>
-      <div class="form-group"><label class="label-inline">Notes</label><input id="nc-notes" class="input" style="width:100%" placeholder="Optional"></div>
+      <div class="nim-wizard-progress">
+        <div class="nim-wizard-step active" id="nc-step-indicator-1" data-step="1">NIM Server</div><div class="nim-wizard-line"></div>
+        <div class="nim-wizard-step" id="nc-step-indicator-2" data-step="2">Client Login</div><div class="nim-wizard-line"></div>
+        <div class="nim-wizard-step" id="nc-step-indicator-3" data-step="3">Network</div><div class="nim-wizard-line"></div>
+        <div class="nim-wizard-step" id="nc-step-indicator-4" data-step="4">Hosts</div><div class="nim-wizard-line"></div>
+        <div class="nim-wizard-step" id="nc-step-indicator-5" data-step="5">Execute</div>
+      </div>
+      <div class="nim-wizard-page active" id="nc-wizard-step-1">
+        <p class="nim-wizard-help">Choose the NIM master that will define and manage this existing AIX client.</p>
+        <div class="form-group"><label class="label-inline" for="nc-server">NIM Server</label><select id="nc-server" class="input" style="width:100%"><option value="">— Select a NIM server —</option></select></div>
+      </div>
+      <div class="nim-wizard-page" id="nc-wizard-step-2">
+        <p class="nim-wizard-help">Enter root SSH access for the existing AIX client. Credentials are used only now and are not saved.</p>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-host">Client Host / IP</label><input id="nc-host" class="input" style="width:100%" placeholder="10.0.0.60"></div>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-user">SSH Username</label><input id="nc-user" class="input" style="width:100%" value="root"></div>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-port">SSH Port</label><input id="nc-port" class="input" style="width:100%" value="22"></div>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-pass">SSH Password</label><input id="nc-pass" type="password" class="input" style="width:100%" placeholder="Leave blank to use SSH key"></div>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-key">SSH Key Path</label><input id="nc-key" class="input" style="width:100%" placeholder="~/.ssh/id_rsa"></div>
+        <button class="btn btn-secondary" id="nc-discover" onclick="discoverClient()">Test &amp; Discover Client</button>
+        <div id="nc-discovery-result" class="result-box hidden" style="margin-top:10px"></div>
+      </div>
+      <div class="nim-wizard-page" id="nc-wizard-step-3">
+        <p class="nim-wizard-help">Confirm discovered client details, select the NIM network and adapter to use.</p>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-name">NIM Client Name</label><input id="nc-name" class="input" style="width:100%"></div>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-network">NIM Network</label><select id="nc-network" class="input" style="width:100%"><option value="">— Select a NIM network —</option></select></div>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-adapter">Client Adapter / MAC</label><select id="nc-adapter" class="input" style="width:100%"><option value="">— Discover client first —</option></select></div>
+        <div class="form-group" style="margin-bottom:4px"><label class="label-inline" for="nc-platform">NIM Platform</label><select id="nc-platform" class="input" style="width:100%"><option value="chrp" selected>chrp — Modern IBM Power / PowerVM AIX LPAR (recommended)</option><option value="rspc">rspc — Legacy PowerPC / RS/6000 compatible system</option><option value="rs6k">rs6k — Legacy IBM RS/6000 system</option></select></div>
+        <p class="nim-wizard-help" style="margin:0 0 10px">Most POWER7, POWER8, POWER9, and POWER10 AIX LPARs use <strong>chrp</strong>. Select a legacy option only when the NIM environment and client hardware require it.</p>
+        <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="nc-kernel">Netboot Kernel</label><input id="nc-kernel" class="input" style="width:100%" readonly></div>
+        <div class="form-group"><label class="label-inline" for="nc-notes">Notes <span class="muted">(optional)</span></label><input id="nc-notes" class="input" style="width:100%" placeholder="Purpose, owner, OS level, etc."></div>
+      </div>
+      <div class="nim-wizard-page" id="nc-wizard-step-4">
+        <p class="nim-wizard-help">PowerPilot checked <code>/etc/hosts</code> on both systems. Confirm before adding any missing name mappings.</p>
+        <div id="nc-hosts-check-result" class="result-box"></div>
+        <label id="nc-hosts-confirm-wrap" class="hidden" style="display:block;margin-top:12px"><input type="checkbox" id="nc-add-hosts"> Add the missing entries shown above to each system's <code>/etc/hosts</code>.</label>
+      </div>
+      <div class="nim-wizard-page" id="nc-wizard-step-5">
+        <p class="nim-wizard-help"><strong style="color:var(--red)">This changes the real NIM environment.</strong> Preflight checks must pass before this page enables the define operation. It then defines the client on the selected NIM master, initializes NIMSH on the client, then verifies it.</p>
+        <div id="nc-preflight-result" class="result-box" style="margin-bottom:12px">Running required NIMSH prerequisite checks…</div>
+        <dl class="nim-wizard-summary" id="nc-wizard-summary"></dl>
+        <div class="nim-command-preview" id="nc-command-preview"></div>
+        <div id="nc-execution-result"></div>
+      </div>
       <div id="nc-result" class="result-box hidden" style="margin-top:10px"></div>
     </div>
-    <div class="modal-footer"><button class="btn btn-primary" onclick="saveClient()">Save</button><button class="btn btn-secondary" onclick="closeModal('add-client-modal')">Cancel</button></div>
+    <div class="modal-footer">
+      <button class="btn btn-secondary" id="nc-wizard-back" onclick="moveClientWizard(-1)" style="display:none">← Back</button>
+      <button class="btn btn-primary" id="nc-wizard-next" onclick="moveClientWizard(1)">Next →</button>
+      <button class="btn btn-primary" id="nc-wizard-save" onclick="saveClient()" style="display:none">Define / Retry NIMSH Initialization</button>
+      <button class="btn btn-secondary" onclick="closeClientWizard()">Cancel</button>
+    </div>
   </div>
 </div>
 {% endblock %}
@@ -140,19 +218,6 @@ async function loadServers() {
       </td></tr>`).join("");
     if(_servers.length===1) browseEnv(_servers[0].id,_servers[0].name);
   } catch(e){tb.innerHTML=`<tr><td colspan="6" class="error-text">${esc(e.message)}</td></tr>`;}
-}
-
-/* ── Load Clients ────────────────────────────────────── */
-async function loadClients() {
-  const tb=document.getElementById("client-tbody");
-  tb.innerHTML='<tr><td colspan="5" class="muted center">Loading…</td></tr>';
-  try {
-    const cl=await fetch("/api/nim/clients").then(r=>r.json());
-    if(!cl.length){tb.innerHTML='<tr><td colspan="5" class="muted center">No NIM clients registered</td></tr>';return;}
-    tb.innerHTML=cl.map(c=>{const s=_servers.find(x=>x.id===c.server_id);return`<tr>
-      <td><strong>${esc(c.name)}</strong></td><td>${esc(c.host||"—")}</td><td>${esc(s?s.name:"—")}</td><td>${esc(c.notes||"—")}</td>
-      <td><button class="btn btn-sm btn-secondary" style="color:var(--red)" onclick="deleteClient('${c.id}','${esc(c.name)}')">✕</button></td></tr>`;}).join("");
-  } catch(e){tb.innerHTML=`<tr><td colspan="5" class="error-text">${esc(e.message)}</td></tr>`;}
 }
 
 /* ── Browse NIM Environment ───────────────────────────── */
@@ -200,7 +265,7 @@ function renderEnv(cats) {
     { key:"spot",       label:"SPOT Resources",          cols:["Name","OS Level","Version","Location","State","Updated"] },
     { key:"lpp_source", label:"LPP Sources",             cols:["Name","Arch","Location","State","Updated"] },
     { key:"mksysb",     label:"mksysb Backup Images",    cols:["Name","OS Level","Location","State","Updated"] },
-    { key:"standalone", label:"NIM Clients (standalone)", cols:["Name","Connect","Platform","Cstate","Mstate"] },
+    { key:"standalone", label:"NIM Clients (standalone)", cols:["Name","Connect","Platform","Cstate","Mstate","Actions"] },
     { key:"networks",   label:"Networks",                cols:["Name","Net Address","Subnet Mask","State"] },
     { key:"other",      label:"Other Resources",         cols:["Name","Type","Class","State","Location"] },
   ];
@@ -253,6 +318,7 @@ function secTable(sec, items) {
       h += `<td>${esc(obj.platform||"—")}</td>`;
       h += `<td>${stBadge(obj.Cstate)}</td>`;
       h += `<td>${stBadge(obj.Mstate)}</td>`;
+      h += `<td><button class="btn btn-sm btn-primary" onclick="openMksysbModal('${esc(obj.name)}')">💾 mksysb Backup</button> <button class="btn btn-sm btn-danger nim-delete-client" title="Remove standalone object from NIM master" onclick="removeStandaloneClient('${esc(obj.name)}')">🗑 Remove from Master</button></td>`;
     } else if (sec.key === "networks") {
       h += `<td><button class="nim-res-link" onclick="showDetail('${esc(obj.name)}')">${esc(obj.name)}</button></td>`;
       h += `<td>${esc(obj.net_addr||"—")}</td>`;
@@ -302,7 +368,57 @@ async function testServer(id) {
   } catch(e) { if(c) c.innerHTML='<span style="color:var(--red)">✘</span>'; }
 }
 async function deleteServer(id,n) { if(!confirm(`Delete NIM server "${n}"?\nAll clients removed too.`))return; await fetch(`/api/nim/servers/${id}`,{method:"DELETE"}); refreshAll(); }
-async function deleteClient(id,n) { if(!confirm(`Remove NIM client "${n}"?`))return; await fetch(`/api/nim/clients/${id}`,{method:"DELETE"}); loadClients(); }
+async function removeStandaloneClient(name) {
+  if (!_selectedServerId) return;
+  if (!confirm(`Remove standalone NIM client object "${name}" from the NIM master?\n\nThis only runs \`nim -o remove ${name}\` on the master. It does not delete /etc/niminfo or alter /etc/hosts on the AIX client.`)) return;
+  try {
+    const response = await fetch(`/api/nim/servers/${_selectedServerId}/standalone-clients/${encodeURIComponent(name)}`, {method:"DELETE"});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Could not remove NIM client object");
+    showToast(`Removed ${name} from NIM master`, "success");
+    const server = _servers.find(item => item.id === _selectedServerId);
+    await browseEnv(_selectedServerId, server ? server.name : "NIM Environment");
+  } catch (error) { showToast("✗ " + error.message, "error"); }
+}
+
+/* ── mksysb backup ─────────────────────────────────────── */
+function mksysbPayload() {
+  return {server_id:document.getElementById("mb-server").value, client_name:document.getElementById("mb-client-name").value.trim(), client_host:document.getElementById("mb-client-host").value.trim(), resource_name:document.getElementById("mb-resource-name").value.trim(), location:document.getElementById("mb-location").value.trim(), client_username:document.getElementById("mb-user").value.trim()||"root", client_port:document.getElementById("mb-port").value.trim()||"22", client_password:document.getElementById("mb-pass").value, client_key_path:document.getElementById("mb-key").value.trim()};
+}
+function openMksysbModal(clientName="") {
+  document.getElementById("mb-server").innerHTML='<option value="">— Select a NIM server —</option>'+_servers.map(s=>`<option value="${s.id}">${esc(s.name)} (${esc(s.host)})</option>`).join("");
+  document.getElementById("mb-server").value=_selectedServerId||"";
+  document.getElementById("mb-client-name").value=clientName;
+  document.getElementById("mb-client-host").value="";
+  document.getElementById("mb-resource-name").value=clientName ? `${clientName}_mksysb` : "";
+  document.getElementById("mb-location").value="";
+  document.getElementById("mb-user").value="root"; document.getElementById("mb-port").value="22";
+  document.getElementById("mb-pass").value=""; document.getElementById("mb-key").value="";
+  document.getElementById("mb-result").className="result-box"; document.getElementById("mb-result").textContent="Enter the details, then run the required preflight checks.";
+  document.getElementById("mb-execution-result").innerHTML=""; document.getElementById("mb-create").disabled=true;
+  document.getElementById("mksysb-modal").classList.remove("hidden");
+}
+async function runMksysbPreflight() {
+  const result=document.getElementById("mb-result"), create=document.getElementById("mb-create"), payload=mksysbPayload();
+  create.disabled=true; result.className="result-box"; result.textContent="Running read-only mksysb prerequisite and capacity checks…";
+  try {
+    const response=await fetch("/api/nim/mksysb/preflight",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(payload)});
+    const data=await response.json(); if(!response.ok||!data.ok) throw new Error(data.error||"Preflight failed");
+    const preflight=data.data; result.className="result-box "+(preflight.ready?"success":"error");
+    result.innerHTML=preflight.checks.map(c=>`<div>${c.ok?"✓":"✗"} <strong>${esc(c.name)}</strong>${c.detail?`<br><span class="muted">${esc(c.detail)}</span>`:""}</div>`).join("");
+    create.disabled=!preflight.ready;
+  } catch(error) { result.className="result-box error"; result.textContent="✗ "+error.message; }
+}
+async function createMksysb() {
+  const button=document.getElementById("mb-create"), output=document.getElementById("mb-execution-result");
+  button.disabled=true; button.textContent="Creating backup…"; output.innerHTML='<p class="muted">Creating mksysb image; this can take considerable time. Do not close this page.</p>';
+  try {
+    const response=await fetch("/api/nim/mksysb/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(mksysbPayload())});
+    const data=await response.json(); const steps=(data.steps||[]).map(s=>`<div class="nim-execution-step ${s.ok?"ok":"error"}"><strong>${s.ok?"✓":"✗"} ${esc(s.name)}</strong><br><span class="muted">${esc(s.stderr||s.output||"")}</span></div>`).join(""); output.innerHTML=steps;
+    if(!response.ok||!data.ok) throw new Error(data.error||"mksysb creation failed");
+    showToast(`mksysb backup created: ${data.resource_name}`,"success"); await refreshAll();
+  } catch(error) { showToast("✗ "+error.message,"error"); } finally { button.disabled=false; button.textContent="Create mksysb Backup"; }
+}
 
 /* ── Save Server ─────────────────────────────────────── */
 function openAddServerModal() { document.getElementById("ns-result").classList.add("hidden"); document.getElementById("add-server-modal").classList.remove("hidden"); }
@@ -315,24 +431,255 @@ async function saveServer() {
   const r=await fetch("/api/nim/servers",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
   if(r.ok){closeModal("add-server-modal");refreshAll();}else{const d=await r.json();res.className="result-box error";res.textContent="✗ "+(d.error||"Failed");res.classList.remove("hidden");}
 }
-/* ── Save Client ─────────────────────────────────────── */
+/* ── Add Client wizard (PowerPilot registration only) ── */
+let _clientWizardStep = 1;
+
 function openAddClientModal() {
   document.getElementById("nc-result").classList.add("hidden");
-  const sel=document.getElementById("nc-server");
-  sel.innerHTML='<option value="">— Select —</option>'+_servers.map(s=>`<option value="${s.id}">${esc(s.name)} (${esc(s.host)})</option>`).join("");
+  document.getElementById("nc-name").value = "";
+  document.getElementById("nc-host").value = "";
+  document.getElementById("nc-user").value = "root";
+  document.getElementById("nc-port").value = "22";
+  document.getElementById("nc-pass").value = "";
+  document.getElementById("nc-key").value = "";
+  document.getElementById("nc-platform").value = "chrp";
+  document.getElementById("nc-kernel").value = "";
+  document.getElementById("nc-notes").value = "";
+  document.getElementById("nc-discovery-result").classList.add("hidden");
+  document.getElementById("nc-execution-result").innerHTML = "";
+  document.getElementById("nc-preflight-result").className = "result-box";
+  document.getElementById("nc-preflight-result").textContent = "Required NIMSH prerequisite checks will run before execution.";
+  document.getElementById("nc-hosts-check-result").innerHTML = "";
+  document.getElementById("nc-hosts-confirm-wrap").classList.add("hidden");
+  document.getElementById("nc-add-hosts").checked = false;
+  const sel = document.getElementById("nc-server");
+  sel.innerHTML = '<option value="">— Select a NIM server —</option>' +
+    _servers.map(s => `<option value="${s.id}">${esc(s.name)} (${esc(s.host)})</option>`).join("");
+  window._clientDiscovery = null;
+  window._nimPreflightReady = false;
+  _clientWizardStep = 1;
+  renderClientWizard();
   document.getElementById("add-client-modal").classList.remove("hidden");
 }
+
+function closeClientWizard() {
+  closeModal("add-client-modal");
+}
+
+async function moveClientWizard(direction) {
+  if (direction > 0) {
+    if (_clientWizardStep === 1 && !document.getElementById("nc-server").value) {
+      return showClientWizardError("Please select a NIM server.");
+    }
+    if (_clientWizardStep === 2 && !window._clientDiscovery) {
+      return showClientWizardError("Use Test & Discover Client before continuing.");
+    }
+    if (_clientWizardStep === 3) {
+      if (!document.getElementById("nc-name").value.trim()) return showClientWizardError("NIM Client Name is required.");
+      if (!document.getElementById("nc-network").value) return showClientWizardError("Select a NIM network.");
+      if (!document.getElementById("nc-adapter").value) return showClientWizardError("Select a client adapter.");
+      if (!document.getElementById("nc-platform").value || !document.getElementById("nc-kernel").value) {
+        return showClientWizardError("Select a NIM platform and ensure the client kernel was discovered.");
+      }
+    }
+    if (_clientWizardStep === 4 && !document.getElementById("nc-add-hosts").checked && window._nimHostsMissing && window._nimHostsMissing.length) {
+      return showClientWizardError("Confirm the missing /etc/hosts entries before continuing.");
+    }
+  }
+  document.getElementById("nc-result").classList.add("hidden");
+  const nextStep = Math.max(1, Math.min(5, _clientWizardStep + direction));
+  if (direction > 0 && nextStep === 4 && !await checkNimHosts()) return;
+  _clientWizardStep = nextStep;
+  renderClientWizard();
+}
+
+function showClientWizardError(message) {
+  const res = document.getElementById("nc-result");
+  res.className = "result-box error";
+  res.textContent = message;
+  res.classList.remove("hidden");
+}
+
+function renderClientWizard() {
+  for (let step = 1; step <= 5; step++) {
+    document.getElementById("nc-wizard-step-" + step).classList.toggle("active", step === _clientWizardStep);
+    const indicator = document.getElementById("nc-step-indicator-" + step);
+    indicator.classList.toggle("active", step === _clientWizardStep);
+    indicator.classList.toggle("done", step < _clientWizardStep);
+  }
+  document.getElementById("nc-wizard-back").style.display = _clientWizardStep > 1 ? "" : "none";
+  document.getElementById("nc-wizard-next").style.display = _clientWizardStep < 5 ? "" : "none";
+  document.getElementById("nc-wizard-save").style.display = _clientWizardStep === 5 ? "" : "none";
+
+  if (_clientWizardStep === 5) {
+    const server = _servers.find(s => s.id === document.getElementById("nc-server").value);
+    const adapter = document.getElementById("nc-adapter").value.split("|");
+    document.getElementById("nc-wizard-summary").innerHTML =
+      `<dt>NIM Server</dt><dd>${esc(server ? server.name : "—")}</dd>` +
+      `<dt>Client Name</dt><dd>${esc(document.getElementById("nc-name").value.trim())}</dd>` +
+      `<dt>Client Host</dt><dd>${esc(document.getElementById("nc-host").value.trim())}</dd>` +
+      `<dt>Network / NIC</dt><dd>${esc(document.getElementById("nc-network").value)} / ${esc(adapter[0] || "")}</dd>`;
+    const client = document.getElementById("nc-name").value.trim();
+    document.getElementById("nc-command-preview").textContent =
+      `NIM master:\nnim -o define -t standalone -a platform=${document.getElementById("nc-platform").value} -a netboot_kernel=${document.getElementById("nc-kernel").value} -a if1="${document.getElementById("nc-network").value} ${document.getElementById("nc-host").value} ${adapter[1] || ""} ${adapter[0] || ""}" -a cable_type1=N/A -a connect=nimsh ${client}\n\nAIX client:\nniminit -a name=${client} -a master=${server ? server.host : ""} -a connect=nimsh`;
+    runNimPreflight();
+  }
+}
+
+async function discoverClient() {
+  const result = document.getElementById("nc-discovery-result");
+  const button = document.getElementById("nc-discover");
+  const payload = {
+    host: document.getElementById("nc-host").value.trim(),
+    username: document.getElementById("nc-user").value.trim() || "root",
+    port: document.getElementById("nc-port").value.trim() || "22",
+    password: document.getElementById("nc-pass").value,
+    key_path: document.getElementById("nc-key").value.trim(),
+  };
+  if (!payload.host) return showClientWizardError("Client Host / IP is required.");
+  button.disabled = true;
+  button.textContent = "Discovering…";
+  result.className = "result-box";
+  result.textContent = "Connecting to client and reading AIX network details…";
+  result.classList.remove("hidden");
+  try {
+    const response = await fetch("/api/nim/clients/discover", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!data.ok) {
+      result.className = "result-box error";
+      result.textContent = "✗ " + (data.error || "Client discovery failed");
+      return;
+    }
+    window._clientDiscovery = data.data;
+    document.getElementById("nc-name").value = data.data.hostname;
+    document.getElementById("nc-kernel").value = data.data.kernel;
+    const adapterSelect = document.getElementById("nc-adapter");
+    const usableAdapters = data.data.adapters.filter(a => a.mac);
+    adapterSelect.innerHTML = usableAdapters.length
+      ? usableAdapters.map(a => `<option value="${esc(a.name)}|${esc(a.mac)}">${esc(a.name)} — ${esc(a.mac)}</option>`).join("")
+      : '<option value="">No adapter MAC address discovered</option>';
+    result.className = usableAdapters.length ? "result-box success" : "result-box error";
+    result.textContent = usableAdapters.length
+      ? `✓ ${data.data.hostname} discovered (${data.data.oslevel || "AIX level unavailable"}). Continue to select its NIM network.`
+      : "✗ Client was reached, but no valid Ethernet MAC address was found. Run: entstat -d ent0 | grep -i 'hardware address' on the AIX client.";
+    await loadNimNetworks();
+  } catch (error) {
+    result.className = "result-box error";
+    result.textContent = "✗ " + error.message;
+  } finally {
+    button.disabled = false;
+    button.textContent = "Test & Discover Client";
+  }
+}
+
+async function loadNimNetworks() {
+  const select = document.getElementById("nc-network");
+  const serverId = document.getElementById("nc-server").value;
+  select.innerHTML = '<option value="">Loading NIM networks…</option>';
+  try {
+    const response = await fetch(`/api/nim/servers/${serverId}/networks`);
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || "Could not list NIM networks");
+    select.innerHTML = '<option value="">— Select a NIM network —</option>' + data.data.map(network => {
+      const suffix = [network.net_addr, network.snm].filter(Boolean).join(" / ");
+      return `<option value="${esc(network.name)}">${esc(network.name)}${suffix ? " (" + esc(suffix) + ")" : ""}</option>`;
+    }).join("");
+  } catch (error) {
+    select.innerHTML = '<option value="">No networks available</option>';
+    showClientWizardError(error.message);
+  }
+}
+
+async function checkNimHosts() {
+  const result = document.getElementById("nc-hosts-check-result");
+  const payload = buildClientPayload();
+  result.className = "result-box";
+  result.textContent = "Checking /etc/hosts on the NIM master and AIX client…";
+  window._nimHostsMissing = [];
+  try {
+    const response = await fetch("/api/nim/clients/hosts-check", {
+      method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(payload),
+    });
+    const data = await response.json();
+    if (!data.ok) throw new Error(data.error || "Could not check /etc/hosts");
+    const missing = data.data.missing || [];
+    window._nimHostsMissing = missing;
+    const confirmation = document.getElementById("nc-hosts-confirm-wrap");
+    confirmation.classList.toggle("hidden", !missing.length);
+    if (!missing.length) {
+      result.className = "result-box success";
+      result.textContent = "✓ Required master and client name mappings already exist in /etc/hosts.";
+    } else {
+      result.className = "result-box error";
+      result.innerHTML = "Missing /etc/hosts entries:<br>" + missing.map(item =>
+        `<strong>${esc(item.target)}:</strong> ${esc(item.ip)} ${esc(item.hostname)}`).join("<br>");
+    }
+    return true;
+  } catch (error) {
+    result.className = "result-box error";
+    result.textContent = "✗ " + error.message;
+    return false;
+  }
+}
+
+function buildClientPayload() {
+  const adapter = document.getElementById("nc-adapter").value.split("|");
+  return {
+    client_name:document.getElementById("nc-name").value.trim(), client_host:document.getElementById("nc-host").value.trim(),
+    server_id:document.getElementById("nc-server").value, network:document.getElementById("nc-network").value,
+    adapter:adapter[0], mac:adapter[1], platform:document.getElementById("nc-platform").value,
+    kernel:document.getElementById("nc-kernel").value, client_username:document.getElementById("nc-user").value.trim()||"root",
+    client_port:document.getElementById("nc-port").value.trim()||"22", client_password:document.getElementById("nc-pass").value,
+    client_key_path:document.getElementById("nc-key").value.trim(), notes:document.getElementById("nc-notes").value.trim(),
+    add_hosts_entries: document.getElementById("nc-add-hosts").checked
+  };
+}
+
 async function saveClient() {
   const res=document.getElementById("nc-result");
-  const p={name:document.getElementById("nc-name").value.trim(),host:document.getElementById("nc-host").value.trim(),
-    server_id:document.getElementById("nc-server").value,notes:document.getElementById("nc-notes").value.trim()};
-  if(!p.name||!p.server_id){res.className="result-box error";res.textContent="Name and NIM Server required";res.classList.remove("hidden");return;}
-  const r=await fetch("/api/nim/clients",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
-  if(r.ok){closeModal("add-client-modal");loadClients();}else{const d=await r.json();res.className="result-box error";res.textContent="✗ "+(d.error||"Failed");res.classList.remove("hidden");}
+  const p=buildClientPayload();
+  if(!p.client_name||!p.network||!p.adapter){showClientWizardError("Client name, NIM network and adapter are required.");return;}
+  if (!window._nimPreflightReady) { showClientWizardError("Required preflight checks have not passed. Correct the failed checks and return to this step to run them again."); return; }
+  const btn=document.getElementById("nc-wizard-save"); btn.disabled=true; btn.textContent="Executing…";
+  document.getElementById("nc-execution-result").innerHTML='<p class="muted">Defining client and initializing NIMSH…</p>';
+  try {
+    const r=await fetch("/api/nim/clients/define",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
+    const d=await r.json();
+    const steps=(d.steps||[]).map(s=>`<div class="nim-execution-step ${s.ok?"ok":"error"}"><strong>${s.ok?"✓":"✗"} ${esc(s.name)}</strong><br><span class="muted">${esc(s.stderr||s.output||"")}</span></div>`).join("");
+    document.getElementById("nc-execution-result").innerHTML=steps;
+    if(r.ok&&d.ok){showToast("NIM client defined and initialized", "success");await refreshAll();}
+    else{showClientWizardError(d.error||"NIM client setup failed. See execution results.");}
+  } catch(error){showClientWizardError(error.message);}
+  finally{btn.disabled=false;btn.textContent="Define / Retry NIMSH Initialization";}
+}
+
+async function runNimPreflight() {
+  const result = document.getElementById("nc-preflight-result");
+  const button = document.getElementById("nc-wizard-save");
+  window._nimPreflightReady = false;
+  button.disabled = true;
+  result.className = "result-box";
+  result.textContent = "Running required NIMSH prerequisite checks without changing either system…";
+  try {
+    const response = await fetch("/api/nim/clients/preflight", {method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(buildClientPayload())});
+    const data = await response.json();
+    if (!response.ok || !data.ok) throw new Error(data.error || "Preflight checks failed");
+    const checks = data.data.checks || [];
+    result.className = "result-box " + (data.data.ready ? "success" : "error");
+    result.innerHTML = checks.map(check => `<div>${check.ok ? "✓" : "✗"} <strong>${esc(check.name)}</strong>${!check.ok && check.detail ? `<br><span class="muted">${esc(check.detail)}</span>` : ""}</div>`).join("");
+    window._nimPreflightReady = !!data.data.ready;
+    if (!window._nimPreflightReady) showClientWizardError("Preflight failed. No NIM master or client changes were made.");
+  } catch (error) {
+    result.className = "result-box error";
+    result.textContent = "✗ " + error.message;
+    showClientWizardError("Preflight failed. No NIM master or client changes were made.");
+  } finally { button.disabled = !window._nimPreflightReady; }
 }
 
 /* ── Init ────────────────────────────────────────────── */
-async function refreshAll() { await loadServers(); await loadClients(); }
+async function refreshAll() { await loadServers(); }
 document.addEventListener("DOMContentLoaded", () => { refreshAll(); });
 </script>
 {% endblock %}

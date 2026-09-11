@@ -9,6 +9,7 @@ import json
 import glob
 import logging
 import subprocess
+import shlex
 
 from flask import (Flask, render_template, request, jsonify, session,
                    send_from_directory, send_file)
@@ -3630,7 +3631,430 @@ def test_delete(filename):
 # NIM Management API
 # ──────────────────────────────────────────────────────────
 
-# ── NIM Servers CRUD ──────────────────────────────────────
+
+_NIM_SAFE_VALUE = re.compile(r"^[A-Za-z0-9_.:-]+$")
+_NIM_MAC_ADDRESS = re.compile(r"^[0-9A-Fa-f]{12}$")
+
+
+def _nim_run_server_command(server: dict, command: str, timeout: int = 60) -> dict:
+    """Run a command on a configured NIM master."""
+    return ssh_manager.run_command(
+        host=server["host"],
+        port=int(server.get("ssh_port", 22)),
+        username=server.get("username", "root"),
+        key_path=server.get("key_path") or None,
+        password=server.get("password") or None,
+        command=command,
+        timeout=timeout,
+    )
+
+
+def _nim_safe_value(value, label: str) -> str:
+    """Validate values that will be put in a NIM command."""
+    value = (value or "").strip()
+    if not value or not _NIM_SAFE_VALUE.fullmatch(value):
+        raise ValueError(f"Invalid {label}")
+    return value
+
+
+def _nim_remote_hosts_contains(result: dict, ip_address: str, hostname: str) -> bool:
+    """Return whether an `awk` hosts lookup returned the requested mapping."""
+    return result.get("ok", False) and result.get("output", "").strip() == "FOUND"
+
+
+def _nim_hosts_lookup_command(ip_address: str, hostname: str) -> str:
+    """Build a shell-safe exact IP/hostname lookup against /etc/hosts."""
+    return (
+        f"awk '$1 == \"{ip_address}\" {{ for (i=2; i<=NF; i++) if ($i == \"{hostname}\") {{ print \"FOUND\"; exit }} }}' "
+        "/etc/hosts"
+    )
+
+
+def _nim_client_prerequisites(client_kwargs: dict) -> dict:
+    """Read mandatory local client prerequisites without changing the client."""
+    command = r'''if command -v niminit >/dev/null 2>&1; then echo '__PP_NIMINIT__=OK'; else echo '__PP_NIMINIT__=MISSING'; fi
+if lslpp -l bos.sysmgt.nim.client 2>/dev/null | awk '$1 == "bos.sysmgt.nim.client" && $3 == "COMMITTED" { found=1 } END { exit !found }'; then echo '__PP_NIMCLIENT__=OK'; else echo '__PP_NIMCLIENT__=MISSING'; fi
+if [ -e /etc/niminfo ]; then echo '__PP_NIMINFO__=EXISTS'; else echo '__PP_NIMINFO__=ABSENT'; fi
+exit 0'''
+    result = ssh_manager.run_command(command=command, **client_kwargs)
+    output = result.get("output", "")
+    values = dict(re.findall(r"__PP_([A-Z]+)__=([A-Z]+)", output))
+    return {
+        "command_result": result,
+        "niminit": values.get("NIMINIT") == "OK",
+        "nim_client_fileset": values.get("NIMCLIENT") == "OK",
+        "niminfo_absent": values.get("NIMINFO") == "ABSENT",
+    }
+
+
+def _nim_mksysb_client_preflight(client_kwargs: dict) -> dict:
+    """Read mksysb capability and total mounted filesystem usage on a client."""
+    command = r'''if command -v mksysb >/dev/null 2>&1; then echo '__PP_MKSYSB__=OK'; else echo '__PP_MKSYSB__=MISSING'; fi
+if lsvg rootvg >/dev/null 2>&1; then
+  echo '__PP_ROOTVG__=OK'
+  df -g | awk '
+    NR > 1 && $2 ~ /^[0-9]+(\.[0-9]+)?$/ && $3 ~ /^[0-9]+(\.[0-9]+)?$/ {
+      used_gb += $2 - $3; filesystem_count++
+    }
+    END {
+      if (filesystem_count > 0) print "__PP_CLIENT_USED_GB__=" used_gb
+    }'
+else
+  echo '__PP_ROOTVG__=MISSING'
+fi
+exit 0'''
+    result = ssh_manager.run_command(command=command, **client_kwargs)
+    output = result.get("output", "")
+    values = dict(re.findall(r"__PP_([A-Z_]+)__=([A-Z]+)", output))
+    used_match = re.search(r"__PP_CLIENT_USED_GB__=([0-9]+(?:\.[0-9]+)?)", output)
+    return {
+        "command_result": result,
+        "mksysb": values.get("MKSYSB") == "OK",
+        "rootvg": values.get("ROOTVG") == "OK",
+        "client_used_gb": float(used_match.group(1)) if used_match else None,
+    }
+
+
+def _nim_mksysb_resource_preflight(srv: dict, resource_name: str, location: str) -> dict:
+    """Read master-side mksysb destination state without modifying it."""
+    command = (
+        f"if [ -d {shlex.quote(location)} ] && [ -w {shlex.quote(location)} ]; then "
+        "echo '__PP_DESTINATION__=OK'; "
+        rf"df -g {shlex.quote(location)} | awk '$2 ~ /^[0-9]+(\.[0-9]+)?$/ && $3 ~ /^[0-9]+(\.[0-9]+)?$/ {{ print "
+        "\"__PP_FREE_GB__=\" $3; exit }'; "
+        f"else echo '__PP_DESTINATION__=INVALID'; fi\n"
+        f"if lsnim {shlex.quote(resource_name)} >/dev/null 2>&1; then echo '__PP_RESOURCE__=EXISTS'; "
+        "else echo '__PP_RESOURCE__=ABSENT'; fi\n"
+        f"if [ -e {shlex.quote(location.rstrip('/') + '/' + resource_name)} ]; then echo '__PP_IMAGE__=EXISTS'; "
+        "else echo '__PP_IMAGE__=ABSENT'; fi\nexit 0"
+    )
+    result = _nim_run_server_command(srv, command, timeout=30)
+    output = result.get("output", "")
+    values = dict(re.findall(r"__PP_([A-Z_]+)__=([A-Z]+)", output))
+    free_match = re.search(r"__PP_FREE_GB__=([0-9]+(?:\.[0-9]+)?)", output)
+    free_gb = float(free_match.group(1)) if free_match else None
+    return {
+        "command_result": result,
+        "destination": values.get("DESTINATION") == "OK",
+        "resource_absent": values.get("RESOURCE") == "ABSENT",
+        "image_absent": values.get("IMAGE") == "ABSENT",
+        "free_gb": free_gb,
+        "free_kb": int(free_gb * 1024 * 1024) if free_gb is not None else None,
+    }
+
+
+def _nim_mksysb_payload(data: dict) -> tuple:
+    """Validate request-only client login and master resource fields."""
+    client_name = _nim_safe_value(data.get("client_name"), "NIM client name")
+    resource_name = _nim_safe_value(data.get("resource_name"), "mksysb resource name")
+    client_host = _nim_safe_value(data.get("client_host"), "client host")
+    location = (data.get("location") or "").strip()
+    if not location.startswith("/") or "\x00" in location or "\n" in location or "\r" in location:
+        raise ValueError("Backup location must be an absolute path without line breaks")
+    client_port = int(data.get("client_port") or 22)
+    if not 1 <= client_port <= 65535:
+        raise ValueError("Invalid client SSH port")
+    client_user = (data.get("client_username") or "root").strip()
+    if not client_user:
+        raise ValueError("Client SSH username is required")
+    client_kwargs = dict(
+        host=client_host, port=client_port, username=client_user,
+        key_path=(data.get("client_key_path") or "").strip() or None,
+        password=data.get("client_password") or None, timeout=30,
+    )
+    return client_name, resource_name, location.rstrip("/"), client_kwargs
+
+
+@app.route("/api/nim/mksysb/preflight", methods=["POST"])
+def nim_mksysb_preflight():
+    """Check NIM mksysb creation prerequisites without changing either system."""
+    data = request.get_json(force=True) or {}
+    srv = nim_store.get_server((data.get("server_id") or "").strip())
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+    try:
+        client_name, resource_name, location, client_kwargs = _nim_mksysb_payload(data)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    checks = []
+    master_nim = _nim_run_server_command(srv, "command -v nim >/dev/null 2>&1", timeout=30)
+    checks.append({"name": "NIM command available on master", "ok": master_nim.get("ok", False),
+                   "detail": master_nim.get("stderr", "") or master_nim.get("error", "")})
+    master_state = _nim_mksysb_resource_preflight(srv, resource_name, location)
+    checks.extend([
+        {"name": f"Backup location is writable ({location})", "ok": master_state["destination"],
+         "detail": "Create the directory and make it writable by the NIM master root user."},
+        {"name": f"NIM resource name is unused ({resource_name})", "ok": master_state["resource_absent"],
+         "detail": "Choose another resource name or remove the existing NIM resource."},
+        {"name": f"Backup image path is unused ({location}/{resource_name})", "ok": master_state["image_absent"],
+         "detail": "Choose another resource name or move/remove the existing image."},
+    ])
+    client_state = _nim_mksysb_client_preflight(client_kwargs)
+    client_result = client_state["command_result"]
+    checks.extend([
+        {"name": "AIX client reachable by SSH", "ok": client_result.get("ok", False),
+         "detail": client_result.get("error", "") or client_result.get("stderr", "")},
+        {"name": "mksysb command installed on client", "ok": client_state["mksysb"], "detail": "Install the AIX base operating system backup utilities if missing."},
+        {"name": "rootvg is available on client", "ok": client_state["rootvg"], "detail": "mksysb only backs up rootvg."},
+    ])
+    nim_client = _nim_run_server_command(srv, f"lsnim -l {shlex.quote(client_name)}", timeout=30)
+    checks.append({"name": f"NIM client exists on master ({client_name})", "ok": nim_client.get("ok", False),
+                   "detail": nim_client.get("stderr", "") or nim_client.get("error", "")})
+    client_used_gb = client_state["client_used_gb"]
+    free_gb = master_state["free_gb"]
+    required_gb = client_used_gb * 1.15 if client_used_gb is not None else None
+    enough_space = required_gb is not None and free_gb is not None and free_gb >= required_gb
+    if required_gb is not None and free_gb is not None:
+        space_detail = (f"Total client filesystem usage (`df -g`): {client_used_gb:.2f} GB; "
+                        f"required with 15% margin: {required_gb:.2f} GB; "
+                        f"master target free space (`df -g {location}`): {free_gb:.2f} GB.")
+    elif client_used_gb is None and free_gb is None:
+        space_detail = ("Could not parse total client filesystem usage (`df -g`) or master target free capacity "
+                        f"(`df -g {location}`).")
+    elif client_used_gb is None:
+        space_detail = (f"Master target free space (`df -g {location}`): {free_gb:.2f} GB, but total client filesystem usage could not be parsed from "
+                        "`df -g` on the AIX client.")
+    else:
+        space_detail = (f"Total client filesystem usage (`df -g`): {client_used_gb:.2f} GB, but free capacity could not be parsed from "
+                        f"`df -g {location}` on the NIM master.")
+    checks.append({"name": "Master destination has sufficient free space", "ok": enough_space, "detail": space_detail})
+    return jsonify({"ok": True, "data": {"ready": all(check["ok"] for check in checks), "checks": checks,
+                                        "client_used_gb": client_used_gb, "required_gb": required_gb,
+                                        "available_gb": free_gb}})
+
+
+@app.route("/api/nim/mksysb/create", methods=["POST"])
+def nim_create_mksysb():
+    """Define a NIM mksysb resource and create its image from a client."""
+    data = request.get_json(force=True) or {}
+    srv = nim_store.get_server((data.get("server_id") or "").strip())
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+    try:
+        client_name, resource_name, location, client_kwargs = _nim_mksysb_payload(data)
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    master_state = _nim_mksysb_resource_preflight(srv, resource_name, location)
+    client_state = _nim_mksysb_client_preflight(client_kwargs)
+    client_used_gb = client_state["client_used_gb"]
+    required_gb = client_used_gb * 1.15 if client_used_gb is not None else None
+    if (not master_state["destination"] or not master_state["resource_absent"] or not master_state["image_absent"]
+            or not client_state["command_result"].get("ok") or not client_state["mksysb"] or not client_state["rootvg"]
+            or required_gb is None or master_state["free_gb"] is None or master_state["free_gb"] < required_gb):
+        return jsonify({"ok": False, "error": "mksysb preflight no longer passes; no NIM resource was created. Run preflight again."}), 409
+    client_exists = _nim_run_server_command(srv, f"lsnim {shlex.quote(client_name)}", timeout=30)
+    if not client_exists.get("ok"):
+        return jsonify({"ok": False, "error": "NIM client no longer exists on the master; no mksysb resource was created."}), 409
+
+    image_path = f"{location}/{resource_name}"
+    define_command = (f"nim -o define -t mksysb -a server=master -a location={shlex.quote(image_path)} "
+                      f"{shlex.quote(resource_name)}")
+    define_result = _nim_run_server_command(srv, define_command, timeout=60)
+    steps = [{"name": "Define mksysb resource on NIM master", "command": define_command,
+              "ok": define_result.get("ok", False), "output": define_result.get("output", ""),
+              "stderr": define_result.get("stderr", "") or define_result.get("error", "")}]
+    if not define_result.get("ok"):
+        return jsonify({"ok": False, "error": "NIM master could not define the mksysb resource", "steps": steps}), 502
+    create_command = f"nim -o create -a source={shlex.quote(client_name)} {shlex.quote(resource_name)}"
+    create_result = _nim_run_server_command(srv, create_command, timeout=7200)
+    steps.append({"name": "Create mksysb image from client", "command": create_command,
+                  "ok": create_result.get("ok", False), "output": create_result.get("output", ""),
+                  "stderr": create_result.get("stderr", "") or create_result.get("error", "")})
+    if not create_result.get("ok"):
+        return jsonify({"ok": False, "error": "The mksysb resource was defined, but image creation failed. Review the output; remove the resource if you will not retry.", "steps": steps}), 502
+    verify_command = f"lsnim -l {shlex.quote(resource_name)}"
+    verify_result = _nim_run_server_command(srv, verify_command, timeout=30)
+    steps.append({"name": "Verify mksysb resource", "command": verify_command,
+                  "ok": verify_result.get("ok", False), "output": verify_result.get("output", ""),
+                  "stderr": verify_result.get("stderr", "") or verify_result.get("error", "")})
+    if not verify_result.get("ok"):
+        return jsonify({"ok": False, "error": "mksysb image creation completed but resource verification failed", "steps": steps}), 502
+    return jsonify({"ok": True, "resource_name": resource_name, "image_path": image_path, "steps": steps}), 201
+
+
+@app.route("/api/nim/clients/preflight", methods=["POST"])
+def nim_preflight_client():
+    """Check NIMSH onboarding prerequisites without changing either system."""
+    data = request.get_json(force=True) or {}
+    srv = nim_store.get_server((data.get("server_id") or "").strip())
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+    try:
+        client_name = _nim_safe_value(data.get("client_name"), "client name")
+        client_host = _nim_safe_value(data.get("client_host"), "client host")
+        network = _nim_safe_value(data.get("network"), "NIM network")
+        client_port = int(data.get("client_port") or 22)
+        if not 1 <= client_port <= 65535:
+            raise ValueError("Invalid client SSH port")
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+    client_kwargs = dict(host=client_host, port=client_port,
+                         username=(data.get("client_username") or "root").strip(),
+                         key_path=(data.get("client_key_path") or "").strip() or None,
+                         password=data.get("client_password") or None, timeout=30)
+    master_name_result = _nim_run_server_command(srv, "hostname", timeout=30)
+    if not master_name_result.get("ok") or not master_name_result.get("output", "").strip():
+        return jsonify({"ok": False, "error": "Could not determine NIM master hostname"}), 502
+    try:
+        master_name = _nim_safe_value(master_name_result["output"].splitlines()[0], "NIM master hostname")
+    except (IndexError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+
+    checks = []
+    master_nim = _nim_run_server_command(srv, "command -v nim >/dev/null 2>&1", timeout=30)
+    checks.append({"name": "NIM command available on master", "ok": master_nim.get("ok", False),
+                   "detail": master_nim.get("stderr", "") or master_nim.get("error", "")})
+    network_check = _nim_run_server_command(srv, f"lsnim -l {shlex.quote(network)}", timeout=30)
+    checks.append({"name": f"Selected NIM network exists ({network})", "ok": network_check.get("ok", False),
+                   "detail": network_check.get("stderr", "") or network_check.get("error", "")})
+    prerequisites = _nim_client_prerequisites(client_kwargs)
+    client_command = prerequisites["command_result"]
+    checks.extend([
+        {"name": "AIX client reachable by SSH", "ok": client_command.get("ok", False),
+         "detail": client_command.get("error", "") or client_command.get("stderr", "")},
+        {"name": "niminit command installed on client", "ok": prerequisites["niminit"], "detail": "Install bos.sysmgt.nim.client if missing."},
+        {"name": "bos.sysmgt.nim.client fileset committed", "ok": prerequisites["nim_client_fileset"], "detail": ""},
+        {"name": "/etc/niminfo is absent on client", "ok": prerequisites["niminfo_absent"],
+         "detail": "Remove the stale file with: rm -f /etc/niminfo, then run preflight again."},
+    ])
+    for target, command, description in (
+        ("NIM master", _nim_hosts_lookup_command(client_host, client_name), f"Master /etc/hosts has {client_host} {client_name}"),
+        ("AIX client", _nim_hosts_lookup_command(srv["host"], master_name), f"Client /etc/hosts has {srv['host']} {master_name}"),
+    ):
+        result = _nim_run_server_command(srv, command, timeout=30) if target == "NIM master" else ssh_manager.run_command(command=command, **client_kwargs)
+        checks.append({"name": description, "ok": _nim_remote_hosts_contains(result, "", ""),
+                       "detail": result.get("error", "") or result.get("stderr", "") or "Add it in the Hosts step if missing."})
+    # Host entries may be deliberately missing at this point: the wizard's
+    # Hosts step can add them after explicit confirmation. All other checks
+    # must pass before the define/niminit operation may begin.
+    return jsonify({"ok": True, "data": {"ready": all(check["ok"] for check in checks[:6]), "checks": checks}})
+
+
+@app.route("/api/nim/clients/hosts-check", methods=["POST"])
+def nim_check_client_hosts():
+    """Check required master/client name mappings without changing either host."""
+    data = request.get_json(force=True) or {}
+    srv = nim_store.get_server((data.get("server_id") or "").strip())
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+    try:
+        client_name = _nim_safe_value(data.get("client_name"), "client name")
+        client_host = _nim_safe_value(data.get("client_host"), "client host")
+        master_host = _nim_safe_value(srv["host"], "NIM master host")
+        client_port = int(data.get("client_port") or 22)
+        if not 1 <= client_port <= 65535:
+            raise ValueError("Invalid client SSH port")
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    master_name_result = _nim_run_server_command(srv, "hostname", timeout=30)
+    if not master_name_result.get("ok"):
+        return jsonify({"ok": False, "error": "Could not determine NIM master hostname"}), 502
+    try:
+        master_name = _nim_safe_value(master_name_result.get("output", "").splitlines()[0], "NIM master hostname")
+    except (IndexError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+
+    client_kwargs = dict(
+        host=client_host, port=client_port,
+        username=(data.get("client_username") or "root").strip(),
+        key_path=(data.get("client_key_path") or "").strip() or None,
+        password=data.get("client_password") or None, timeout=30,
+    )
+    master_has_client = _nim_run_server_command(srv, _nim_hosts_lookup_command(client_host, client_name), timeout=30)
+    client_has_master = ssh_manager.run_command(command=_nim_hosts_lookup_command(master_host, master_name), **client_kwargs)
+    if not master_has_client.get("ok") or not client_has_master.get("ok"):
+        return jsonify({"ok": False, "error": "Could not read /etc/hosts on the NIM master or client"}), 502
+
+    missing = []
+    if not _nim_remote_hosts_contains(master_has_client, client_host, client_name):
+        missing.append({"target": "NIM master", "ip": client_host, "hostname": client_name})
+    if not _nim_remote_hosts_contains(client_has_master, master_host, master_name):
+        missing.append({"target": "AIX client", "ip": master_host, "hostname": master_name})
+    return jsonify({"ok": True, "data": {"master_name": master_name, "missing": missing}})
+
+
+@app.route("/api/nim/clients/discover", methods=["POST"])
+def nim_discover_client():
+    """Connect to an existing AIX client and discover NIM define attributes.
+
+    Credentials are used only for this request and are never persisted.
+    """
+    data = request.get_json(force=True) or {}
+    host = (data.get("host") or "").strip()
+    username = (data.get("username") or "root").strip()
+    if not host or not username:
+        return jsonify({"ok": False, "error": "Client host and SSH username are required"}), 400
+
+    try:
+        port = int(data.get("port") or 22)
+        if not 1 <= port <= 65535:
+            raise ValueError
+    except (TypeError, ValueError):
+        return jsonify({"ok": False, "error": "Invalid SSH port"}), 400
+
+    # The markers make the response robust against normal command output.
+    command = r'''printf '__PP_HOSTNAME__='; hostname
+printf '__PP_PLATFORM__='; uname -M
+printf '__PP_KERNEL__='; getconf KERNEL_BITMODE 2>/dev/null || getconf KERNEL_BITMODE
+printf '__PP_OSLEVEL__='; oslevel -s 2>/dev/null
+for adapter in $(lsdev -Cc adapter 2>/dev/null | awk '$1 ~ /^ent[0-9]+$/ {print $1}'); do
+  printf '__PP_ADAPTER__=%s|' "$adapter"
+  entstat -d "$adapter" 2>/dev/null | awk '
+    /[Hh]ardware [Aa]ddress/ {
+      if (match($0, /[0-9A-Fa-f][0-9A-Fa-f](:[0-9A-Fa-f][0-9A-Fa-f]){5}/)) {
+        print substr($0, RSTART, RLENGTH); exit
+      }
+    }'
+done'''
+    result = ssh_manager.run_command(
+        host=host, port=port, username=username,
+        key_path=(data.get("key_path") or "").strip() or None,
+        password=data.get("password") or None,
+        command=command, timeout=45,
+    )
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error") or result.get("stderr") or "Client discovery failed"})
+
+    discovered = {"hostname": "", "platform": "", "kernel": "", "oslevel": "", "adapters": []}
+    for line in result.get("output", "").splitlines():
+        line = line.strip()
+        if line.startswith("__PP_HOSTNAME__="):
+            discovered["hostname"] = line.split("=", 1)[1].strip()
+        elif line.startswith("__PP_PLATFORM__="):
+            discovered["platform"] = line.split("=", 1)[1].strip()
+        elif line.startswith("__PP_KERNEL__="):
+            discovered["kernel"] = line.split("=", 1)[1].strip()
+        elif line.startswith("__PP_OSLEVEL__="):
+            discovered["oslevel"] = line.split("=", 1)[1].strip()
+        elif line.startswith("__PP_ADAPTER__="):
+            adapter, _, mac = line.split("=", 1)[1].partition("|")
+            normalized_mac = re.sub(r"[^0-9A-Fa-f]", "", mac).upper()
+            # NIM's if1 attribute requires exactly six MAC octets. Do not
+            # convert arbitrary adapter-status text into a purported address.
+            discovered["adapters"].append({
+                "name": adapter.strip(),
+                "mac": normalized_mac if _NIM_MAC_ADDRESS.fullmatch(normalized_mac) else "",
+            })
+
+    if not discovered["hostname"]:
+        return jsonify({"ok": False, "error": "Could not determine client hostname"})
+    return jsonify({"ok": True, "data": discovered})
+
+
+@app.route("/api/nim/servers/<server_id>/networks", methods=["GET"])
+def nim_server_networks(server_id):
+    """List NIM network objects available on the selected master."""
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+    result = _nim_run_server_command(srv, "lsnim -l -t ent", timeout=30)
+    output = result.get("output", "")
+    if not output and not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error") or result.get("stderr") or "Could not list NIM networks"})
+    return jsonify({"ok": True, "data": _parse_lsnim_stanzas(output)})
 
 @app.route("/api/nim/servers", methods=["GET"])
 def nim_list_servers():
@@ -3673,31 +4097,156 @@ def nim_test_server(server_id):
     return jsonify(result)
 
 
-# ── NIM Clients CRUD ─────────────────────────────────────
+@app.route("/api/nim/clients/define", methods=["POST"])
+def nim_define_client():
+    """Define an existing AIX client on a NIM master and initialise nimsh.
 
-@app.route("/api/nim/clients", methods=["GET"])
-def nim_list_clients():
-    """Return all NIM clients, optionally filtered by ?server_id=."""
-    server_id = request.args.get("server_id")
-    return jsonify(nim_store.list_clients(server_id=server_id))
+    This intentionally changes the remote NIM master and client. Client SSH
+    credentials are request-only and are not stored in the local NIM profile.
+    """
+    data = request.get_json(force=True) or {}
+    server_id = (data.get("server_id") or "").strip()
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
 
+    try:
+        client_name = _nim_safe_value(data.get("client_name"), "client name")
+        client_host = _nim_safe_value(data.get("client_host"), "client host")
+        network = _nim_safe_value(data.get("network"), "NIM network")
+        adapter = _nim_safe_value(data.get("adapter"), "network adapter")
+        platform = _nim_safe_value(data.get("platform"), "platform")
+        kernel = _nim_safe_value(data.get("kernel"), "netboot kernel")
+        mac = re.sub(r"[^0-9A-Fa-f]", "", data.get("mac") or "").upper()
+        if not _NIM_MAC_ADDRESS.fullmatch(mac):
+            raise ValueError("Invalid MAC address")
+        client_port = int(data.get("client_port") or 22)
+        if not 1 <= client_port <= 65535:
+            raise ValueError("Invalid client SSH port")
+    except (TypeError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
 
-@app.route("/api/nim/clients", methods=["POST"])
-def nim_add_client():
-    """Register a NIM client."""
-    data = request.get_json(force=True)
-    required = ["name", "server_id"]
-    missing = [f for f in required if not data.get(f)]
-    if missing:
-        return jsonify({"error": f"Missing fields: {', '.join(missing)}"}), 400
-    entry = nim_store.add_client(data)
-    return jsonify(entry), 201
+    client_user = (data.get("client_username") or "root").strip()
+    if not client_user:
+        return jsonify({"ok": False, "error": "Client SSH username is required"}), 400
 
+    master_name_result = _nim_run_server_command(srv, "hostname", timeout=30)
+    if not master_name_result.get("ok"):
+        return jsonify({"ok": False, "error": "Could not determine NIM master hostname"}), 502
+    try:
+        master_name = _nim_safe_value(master_name_result.get("output", "").splitlines()[0], "NIM master hostname")
+    except (IndexError, ValueError) as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 502
+    client_kwargs = dict(
+        host=client_host, port=client_port, username=client_user,
+        key_path=(data.get("client_key_path") or "").strip() or None,
+        password=data.get("client_password") or None, timeout=30,
+    )
+    # Never create or reuse a master object when the client cannot run
+    # niminit, or when its existing configuration would make niminit fail.
+    prerequisites = _nim_client_prerequisites(client_kwargs)
+    prerequisite_result = prerequisites["command_result"]
+    if not prerequisite_result.get("ok"):
+        return jsonify({"ok": False, "error": "Could not verify NIM prerequisites on the AIX client; no NIM master changes were made."}), 502
+    if not prerequisites["niminit"] or not prerequisites["nim_client_fileset"]:
+        return jsonify({"ok": False, "error": "The AIX client is missing niminit or the committed bos.sysmgt.nim.client fileset; no NIM master changes were made."}), 409
+    if not prerequisites["niminfo_absent"]:
+        return jsonify({"ok": False, "error": "The AIX client already has /etc/niminfo. Remove it first (rm -f /etc/niminfo), then run the wizard again; no NIM master changes were made."}), 409
+    network_exists = _nim_run_server_command(srv, f"lsnim -l {shlex.quote(network)}", timeout=30)
+    if not network_exists.get("ok"):
+        return jsonify({"ok": False, "error": f"Selected NIM network '{network}' no longer exists; no NIM master changes were made."}), 409
+    hosts_updates = []
+    for target, command, entry in (
+        ("NIM master", _nim_hosts_lookup_command(client_host, client_name), f"{client_host} {client_name}"),
+        ("AIX client", _nim_hosts_lookup_command(srv["host"], master_name), f"{srv['host']} {master_name}"),
+    ):
+        lookup = (_nim_run_server_command(srv, command, timeout=30) if target == "NIM master"
+                  else ssh_manager.run_command(command=command, **client_kwargs))
+        if not lookup.get("ok"):
+            return jsonify({"ok": False, "error": f"Could not read /etc/hosts on {target}"}), 502
+        if not _nim_remote_hosts_contains(lookup, "", ""):
+            if not data.get("add_hosts_entries"):
+                return jsonify({"ok": False, "error": "Required /etc/hosts entries are missing. Confirm the Hosts step before executing."}), 409
+            append_command = f"printf '%s\\n' {shlex.quote(entry)} >> /etc/hosts"
+            update = (_nim_run_server_command(srv, append_command, timeout=30) if target == "NIM master"
+                      else ssh_manager.run_command(command=append_command, **client_kwargs))
+            hosts_updates.append({"name": f"Add /etc/hosts entry on {target}", "command": append_command,
+                                  "ok": update.get("ok", False), "output": update.get("output", ""),
+                                  "stderr": update.get("stderr", "") or update.get("error", "")})
+            if not update.get("ok"):
+                return jsonify({"ok": False, "error": f"Could not add /etc/hosts entry on {target}", "steps": hosts_updates}), 502
 
-@app.route("/api/nim/clients/<client_id>", methods=["DELETE"])
-def nim_delete_client(client_id):
-    nim_store.remove_client(client_id)
-    return jsonify({"ok": True})
+    # A previous request can successfully define the master object but fail
+    # before niminit completes. Reuse that object so the user can safely retry
+    # client initialisation after fixing DNS, routing, or /etc/hosts.
+    exists = _nim_run_server_command(srv, f"lsnim {shlex.quote(client_name)}", timeout=30)
+    steps = hosts_updates
+    if exists.get("ok"):
+        steps.append({
+            "name": "Define client on NIM master",
+            "command": f"lsnim {client_name}",
+            "ok": True,
+            "output": "Client already exists on the NIM master; reusing it for niminit retry.",
+            "stderr": "",
+        })
+    else:
+        # Define first: niminit needs the master to recognise the client object.
+        if1 = f"{network} {client_host} {mac} {adapter}"
+        define_command = (
+            "nim -o define -t standalone "
+            f"-a platform={shlex.quote(platform)} "
+            f"-a netboot_kernel={shlex.quote(kernel)} "
+            f"-a if1={shlex.quote(if1)} "
+            "-a cable_type1=N/A -a connect=nimsh "
+            f"{shlex.quote(client_name)}"
+        )
+        define_result = _nim_run_server_command(srv, define_command, timeout=60)
+        steps.append({
+            "name": "Define client on NIM master",
+            "command": define_command,
+            "ok": define_result.get("ok", False),
+            "output": define_result.get("output", ""),
+            "stderr": define_result.get("stderr", "") or define_result.get("error", ""),
+        })
+        if not define_result.get("ok"):
+            return jsonify({"ok": False, "error": "NIM master could not define the client", "steps": steps}), 502
+
+    niminit_command = (
+        f"niminit -a name={shlex.quote(client_name)} "
+        f"-a master={shlex.quote(srv['host'])} -a connect=nimsh"
+    )
+    init_result = ssh_manager.run_command(
+        host=client_host, port=client_port, username=client_user,
+        key_path=(data.get("client_key_path") or "").strip() or None,
+        password=data.get("client_password") or None,
+        command=niminit_command, timeout=60,
+    )
+    steps.append({
+        "name": "Initialize NIMSH on client",
+        "command": niminit_command,
+        "ok": init_result.get("ok", False),
+        "output": init_result.get("output", ""),
+        "stderr": init_result.get("stderr", "") or init_result.get("error", ""),
+    })
+    if not init_result.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": "Client was defined on the NIM master, but niminit failed on the client. Resolve the error then run niminit manually.",
+            "steps": steps,
+        }), 502
+
+    verify_result = _nim_run_server_command(srv, f"lsnim -l {shlex.quote(client_name)}", timeout=30)
+    steps.append({
+        "name": "Verify client on NIM master",
+        "command": f"lsnim -l {client_name}",
+        "ok": verify_result.get("ok", False),
+        "output": verify_result.get("output", ""),
+        "stderr": verify_result.get("stderr", "") or verify_result.get("error", ""),
+    })
+    if not verify_result.get("ok"):
+        return jsonify({"ok": False, "error": "Client was added but master verification failed", "steps": steps}), 502
+
+    return jsonify({"ok": True, "steps": steps}), 201
 
 
 # ── NIM Resources (read from server via SSH) ──────────────
@@ -3816,6 +4365,28 @@ def nim_server_nim_clients(server_id):
 
     clients = _parse_lsnim_stanzas(output)
     return jsonify({"ok": True, "data": clients})
+
+
+@app.route("/api/nim/servers/<server_id>/standalone-clients/<client_name>", methods=["DELETE"])
+def nim_remove_standalone_client(server_id, client_name):
+    """Remove an existing standalone object directly from the NIM master."""
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+    try:
+        client_name = _nim_safe_value(client_name, "NIM client name")
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    command = f"nim -o remove {shlex.quote(client_name)}"
+    result = _nim_run_server_command(srv, command, timeout=60)
+    if not result.get("ok"):
+        return jsonify({
+            "ok": False,
+            "error": result.get("stderr") or result.get("error") or "NIM master could not remove the client object",
+            "command": command,
+        }), 502
+    return jsonify({"ok": True, "command": command, "output": result.get("output", "")})
 
 
 # ── NIM output parsers ───────────────────────────────────

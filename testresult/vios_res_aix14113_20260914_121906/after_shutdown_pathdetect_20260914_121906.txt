@@ -1,0 +1,42 @@
+==================================================================
+Timestamp : 2026-09-14 12:19:52
+Host      : aix14113
+Purpose   : I/O probe on hdisk0 (trigger path failure detection)
+Command   : dd if=/dev/hdisk0 of=/dev/null bs=64k count=16 2>&1
+------------------------------------------------------------------
+16+0 records in.
+16+0 records out.
+
+==================================================================
+Timestamp : 2026-09-14 12:19:52
+Host      : aix14113
+Purpose   : cfgmgr - rescan device tree to detect failed path
+Command   : cfgmgr
+------------------------------------------------------------------
+Method error (/usr/lib/methods/cfgemfscsi -l fscsi0 ):
+	0514-061 Cannot find a child device.
+
+==================================================================
+Timestamp : 2026-09-14 12:19:58
+Host      : aix14113
+Purpose   : MPIO path status after cfgmgr (look for Failed paths)
+Command   : lspath
+------------------------------------------------------------------
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi1
+Enabled hdisk0 fscsi1
+
+==================================================================
+Timestamp : 2026-09-14 12:19:58
+Host      : aix14113
+Purpose   : Paths for hdisk0 after cfgmgr
+Command   : lspath -l hdisk0 -H -F 'name path_id parent connection status'
+------------------------------------------------------------------
+name   path_id parent connection         status
+
+hdisk0 0       fscsi0 500507605e80cc01,0 Enabled
+hdisk0 1       fscsi0 500507605e80cc21,0 Enabled
+hdisk0 2       fscsi1 500507605e80cc01,0 Enabled
+hdisk0 3       fscsi1 500507605e80cc21,0 Enabled
+

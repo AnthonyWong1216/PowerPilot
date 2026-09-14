@@ -84,8 +84,8 @@
     <div class="modal-body">
       <p class="nim-wizard-help">The NIM master creates and stores an installable rootvg image. Preflight is read-only and estimates required master storage from allocated rootvg partitions plus a 15% margin. This does not back up non-rootvg volume groups, raw devices, or paging spaces.</p>
       <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-server">NIM Server</label><select id="mb-server" class="input" style="width:100%"><option value="">— Select a NIM server —</option></select></div>
-      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-client-name">NIM Client Name</label><input id="mb-client-name" class="input" style="width:100%" placeholder="client01"></div>
-      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-client-host">AIX Client Host / IP</label><input id="mb-client-host" class="input" style="width:100%" placeholder="client01 or 10.0.0.21"></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-client-name">NIM Client Name</label><select id="mb-client-name" class="input" style="width:100%" onchange="onMksysbClientChange()"><option value="">— Select a NIM client —</option></select></div>
+      <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-client-host">AIX Client Host / IP</label><input id="mb-client-host" class="input" style="width:100%" placeholder="client01 or 10.0.0.21"><span class="muted" style="font-size:11px">Auto-resolved from the NIM master's host table. Override if needed.</span></div>
       <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-resource-name">mksysb Resource Name</label><input id="mb-resource-name" class="input" style="width:100%" placeholder="client01_mksysb"></div>
       <div class="form-group" style="margin-bottom:10px"><label class="label-inline" for="mb-location">Master Backup Directory</label><input id="mb-location" class="input" style="width:100%" placeholder="/export/nim/mksysb"></div>
       <div style="border-top:1px solid var(--border);padding-top:12px;margin-top:12px">
@@ -191,6 +191,18 @@ let _selectedServerId = null;
 let _nimData = null;
 
 function esc(s) { return (s||"").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;"); }
+function renderStepHtml(s) {
+  const icon = s.ok ? "✓" : "✗";
+  const cls = s.ok ? "ok" : "error";
+  let detail = "";
+  if (s.command) detail += `<div class="nim-command-preview" style="margin:4px 0">${esc(s.command)}</div>`;
+  const stderr = (s.stderr || "").trim();
+  const output = (s.output || "").trim();
+  if (stderr) detail += `<span class="muted">${esc(stderr)}</span>`;
+  if (output && output !== stderr) detail += `${stderr ? "<br>" : ""}<span class="muted">${esc(output)}</span>`;
+  if (!stderr && !output) detail += `<span class="muted">No additional output returned.</span>`;
+  return `<div class="nim-execution-step ${cls}"><strong>${icon} ${esc(s.name)}</strong><br>${detail}</div>`;
+}
 function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
 function fmtList(v) { return Array.isArray(v) ? v.map(esc).join(", ") : esc(v||"—"); }
 function stBadge(v) {
@@ -388,15 +400,33 @@ function mksysbPayload() {
 function openMksysbModal(clientName="") {
   document.getElementById("mb-server").innerHTML='<option value="">— Select a NIM server —</option>'+_servers.map(s=>`<option value="${s.id}">${esc(s.name)} (${esc(s.host)})</option>`).join("");
   document.getElementById("mb-server").value=_selectedServerId||"";
-  document.getElementById("mb-client-name").value=clientName;
-  document.getElementById("mb-client-host").value="";
-  document.getElementById("mb-resource-name").value=clientName ? `${clientName}_mksysb` : "";
+  const clientSelect=document.getElementById("mb-client-name");
+  const clients=(_nimData&&_nimData.standalone)||[];
+  clientSelect.innerHTML='<option value="">— Select a NIM client —</option>'+clients.map(c=>`<option value="${esc(c.name)}">${esc(c.name)}</option>`).join("");
+  clientSelect.value=clientName;
+  onMksysbClientChange();
   document.getElementById("mb-location").value="";
   document.getElementById("mb-user").value="root"; document.getElementById("mb-port").value="22";
   document.getElementById("mb-pass").value=""; document.getElementById("mb-key").value="";
   document.getElementById("mb-result").className="result-box"; document.getElementById("mb-result").textContent="Enter the details, then run the required preflight checks.";
   document.getElementById("mb-execution-result").innerHTML=""; document.getElementById("mb-create").disabled=true;
   document.getElementById("mksysb-modal").classList.remove("hidden");
+}
+function onMksysbClientChange() {
+  const sel=document.getElementById("mb-client-name");
+  const name=sel.value;
+  const hostInput=document.getElementById("mb-client-host");
+  document.getElementById("mb-resource-name").value=name ? `${name}_mksysb` : "";
+  hostInput.value="";
+  if (!name || !_selectedServerId) return;
+  hostInput.value="Resolving…";
+  fetch(`/api/nim/servers/${encodeURIComponent(_selectedServerId)}/resolve-client/${encodeURIComponent(name)}`)
+    .then(r=>r.json())
+    .then(d=>{
+      if (d.ok && d.data) hostInput.value=d.data.ip||d.data.hostname||"";
+      else hostInput.value="";
+    })
+    .catch(()=>{ hostInput.value=""; });
 }
 async function runMksysbPreflight() {
   const result=document.getElementById("mb-result"), create=document.getElementById("mb-create"), payload=mksysbPayload();
@@ -414,7 +444,7 @@ async function createMksysb() {
   button.disabled=true; button.textContent="Creating backup…"; output.innerHTML='<p class="muted">Creating mksysb image; this can take considerable time. Do not close this page.</p>';
   try {
     const response=await fetch("/api/nim/mksysb/create",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(mksysbPayload())});
-    const data=await response.json(); const steps=(data.steps||[]).map(s=>`<div class="nim-execution-step ${s.ok?"ok":"error"}"><strong>${s.ok?"✓":"✗"} ${esc(s.name)}</strong><br><span class="muted">${esc(s.stderr||s.output||"")}</span></div>`).join(""); output.innerHTML=steps;
+    const data=await response.json(); output.innerHTML=(data.steps||[]).map(renderStepHtml).join("");
     if(!response.ok||!data.ok) throw new Error(data.error||"mksysb creation failed");
     showToast(`mksysb backup created: ${data.resource_name}`,"success"); await refreshAll();
   } catch(error) { showToast("✗ "+error.message,"error"); } finally { button.disabled=false; button.textContent="Create mksysb Backup"; }
@@ -647,8 +677,7 @@ async function saveClient() {
   try {
     const r=await fetch("/api/nim/clients/define",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify(p)});
     const d=await r.json();
-    const steps=(d.steps||[]).map(s=>`<div class="nim-execution-step ${s.ok?"ok":"error"}"><strong>${s.ok?"✓":"✗"} ${esc(s.name)}</strong><br><span class="muted">${esc(s.stderr||s.output||"")}</span></div>`).join("");
-    document.getElementById("nc-execution-result").innerHTML=steps;
+    document.getElementById("nc-execution-result").innerHTML=(d.steps||[]).map(renderStepHtml).join("");
     if(r.ok&&d.ok){showToast("NIM client defined and initialized", "success");await refreshAll();}
     else{showClientWizardError(d.error||"NIM client setup failed. See execution results.");}
   } catch(error){showClientWizardError(error.message);}

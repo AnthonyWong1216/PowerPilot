@@ -3849,21 +3849,16 @@ def nim_create_mksysb():
         return jsonify({"ok": False, "error": "NIM client no longer exists on the master; no mksysb resource was created."}), 409
 
     image_path = f"{location}/{resource_name}"
-    define_command = (f"nim -o define -t mksysb -a server=master -a location={shlex.quote(image_path)} "
+    define_command = (f"nim -o define -t mksysb -a server=master "
+                      f"-a location={shlex.quote(image_path)} "
+                      f"-a mk_image=yes -a source={shlex.quote(client_name)} "
                       f"{shlex.quote(resource_name)}")
-    define_result = _nim_run_server_command(srv, define_command, timeout=60)
-    steps = [{"name": "Define mksysb resource on NIM master", "command": define_command,
+    define_result = _nim_run_server_command(srv, define_command, timeout=7200)
+    steps = [{"name": "Define mksysb resource and create image from client", "command": define_command,
               "ok": define_result.get("ok", False), "output": define_result.get("output", ""),
               "stderr": define_result.get("stderr", "") or define_result.get("error", "")}]
     if not define_result.get("ok"):
-        return jsonify({"ok": False, "error": "NIM master could not define the mksysb resource", "steps": steps}), 502
-    create_command = f"nim -o create -a source={shlex.quote(client_name)} {shlex.quote(resource_name)}"
-    create_result = _nim_run_server_command(srv, create_command, timeout=7200)
-    steps.append({"name": "Create mksysb image from client", "command": create_command,
-                  "ok": create_result.get("ok", False), "output": create_result.get("output", ""),
-                  "stderr": create_result.get("stderr", "") or create_result.get("error", "")})
-    if not create_result.get("ok"):
-        return jsonify({"ok": False, "error": "The mksysb resource was defined, but image creation failed. Review the output; remove the resource if you will not retry.", "steps": steps}), 502
+        return jsonify({"ok": False, "error": "NIM master could not define and create the mksysb resource", "steps": steps}), 502
     verify_command = f"lsnim -l {shlex.quote(resource_name)}"
     verify_result = _nim_run_server_command(srv, verify_command, timeout=30)
     steps.append({"name": "Verify mksysb resource", "command": verify_command,
@@ -4387,6 +4382,56 @@ def nim_remove_standalone_client(server_id, client_name):
             "command": command,
         }), 502
     return jsonify({"ok": True, "command": command, "output": result.get("output", "")})
+
+
+@app.route("/api/nim/servers/<server_id>/resolve-client/<client_name>",
+           methods=["GET"])
+def nim_resolve_client(server_id, client_name):
+    """Resolve a NIM client name to its IP address using the NIM master.
+
+    Parses the client's ``if1`` attribute from ``lsnim -l <client>`` to obtain
+    the registered hostname, then resolves it to an IP via the NIM master's
+    ``/etc/hosts`` (or DNS) using ``getent hosts``.
+    """
+    srv = nim_store.get_server(server_id)
+    if not srv:
+        return jsonify({"ok": False, "error": "NIM server not found"}), 404
+    try:
+        client_name = _nim_safe_value(client_name, "NIM client name")
+    except ValueError as exc:
+        return jsonify({"ok": False, "error": str(exc)}), 400
+
+    # Step 1 — get the client's if1 hostname from lsnim
+    detail_result = _nim_run_server_command(
+        srv, f"lsnim -l {shlex.quote(client_name)}", timeout=30)
+    detail_output = detail_result.get("output", "")
+    objects = _parse_lsnim_stanzas(detail_output)
+    if not objects:
+        return jsonify({"ok": False, "error": "Could not read NIM client details"}), 502
+
+    attrs = objects[0].get("attrs", {})
+    # if1 format: <network> <hostname> <cable_type> <mac> <adapter>
+    if1 = attrs.get("if1", "")
+    if isinstance(if1, list):
+        if1 = if1[0]
+    parts = if1.split()
+    hostname = parts[1] if len(parts) >= 2 else client_name
+
+    # Step 2 — resolve the hostname to an IP on the NIM master
+    resolve_result = _nim_run_server_command(
+        srv,
+        f"getent hosts {shlex.quote(hostname)} | awk '{{print $1; exit}}'",
+        timeout=15,
+    )
+    ip_lines = (resolve_result.get("output") or "").strip().splitlines() if resolve_result.get("ok") else []
+    ip = ip_lines[0].strip() if ip_lines else ""
+
+    if not ip:
+        # Fallback: return the hostname itself — user can override
+        return jsonify({"ok": True, "data": {"hostname": hostname, "ip": hostname,
+                        "note": "Could not resolve to an IP; returning hostname."}})
+
+    return jsonify({"ok": True, "data": {"hostname": hostname, "ip": ip}})
 
 
 # ── NIM output parsers ───────────────────────────────────

@@ -1,0 +1,61 @@
+==================================================================
+Timestamp : 2026-09-14 12:25:25
+Host      : aix14113
+Purpose   : errpt (recent) - look for PATH_HAS_RECOVERED / path recovery
+Command   : errpt | head -40
+------------------------------------------------------------------
+IDENTIFIER TIMESTAMP  T C RESOURCE_NAME  DESCRIPTION
+DE3B8540   0806161326 P H hdisk0         PATH HAS FAILED
+E6DB28E5   0806161326 T H fscsi1         ADAPTER ERROR
+E6DB28E5   0806115426 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806114626 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806112926 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806110626 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806102026 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806093626 T H fscsi0         ADAPTER ERROR
+
+==================================================================
+Timestamp : 2026-09-14 12:25:25
+Host      : aix14113
+Purpose   : errpt recovery-related entries
+Command   : errpt -a | grep -iE 'PATH_HAS_RECOVERED|path.*recover|PATH_HAS_FAILED' | head -40
+------------------------------------------------------------------
+
+==================================================================
+Timestamp : 2026-09-14 12:25:26
+Host      : aix14113
+Purpose   : MPIO path status (should be Enabled again)
+Command   : lspath
+------------------------------------------------------------------
+Failed  hdisk0 fscsi0
+Failed  hdisk0 fscsi0
+Enabled hdisk0 fscsi1
+Enabled hdisk0 fscsi1
+
+==================================================================
+Timestamp : 2026-09-14 12:25:26
+Host      : aix14113
+Purpose   : chpath enable hdisk0 via fscsi0
+Command   : chpath -l hdisk0 -p fscsi0 -w '500507605e80cc01,0' -s enable
+------------------------------------------------------------------
+paths Changed
+
+==================================================================
+Timestamp : 2026-09-14 12:25:26
+Host      : aix14113
+Purpose   : chpath enable hdisk0 via fscsi0
+Command   : chpath -l hdisk0 -p fscsi0 -w '500507605e80cc21,0' -s enable
+------------------------------------------------------------------
+paths Changed
+
+==================================================================
+Timestamp : 2026-09-14 12:25:31
+Host      : aix14113
+Purpose   : MPIO path status after chpath enable
+Command   : lspath
+------------------------------------------------------------------
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi1
+Enabled hdisk0 fscsi1
+

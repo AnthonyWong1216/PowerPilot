@@ -1,0 +1,39 @@
+==================================================================
+ VIOS Resilience - Client Inventory
+ Host      : aix14113
+ Generated : Mon Sep 14 12:19:06 HKT 2026
+==================================================================
+
+-- Network interfaces (en*) --
+en0
+
+-- Ping target (default gateway) --
+192.168.140.254
+
+-- Network targets file --
+(not configured - see 'netsetup' command to create)
+
+-- Disks (hdisk*) --
+hdisk0
+
+-- FC adapters (fcs*) with lscfg location codes --
+  DEVICE   LOCATION CODE                    TYPE     LPAR-ID SLOT   PORT DESCRIPTION
+  fcs0     U9105.22A.7892A71-V13-C3-T0      VIRTUAL  13      3      0    Virtual Fibre Channel Client Adapter
+  fcs1     U9105.22A.7892A71-V13-C4-T0      VIRTUAL  13      4      0    Virtual Fibre Channel Client Adapter
+
+-- Ethernet adapters (ent*) with lscfg location codes --
+  DEVICE   LOCATION CODE                    TYPE     LPAR-ID SLOT   PORT DESCRIPTION
+  ent0     U9105.22A.7892A71-V13-C2-T0      VIRTUAL  13      2      0    Virtual I/O Ethernet Adapter (l-lan)
+  ent1     U9105.22A.7892A71-V13-C10-T0     VIRTUAL  13      10     0    Virtual I/O Ethernet Adapter (l-lan)
+
+-- Virtual adapter slots of this LPAR (from -C<n> in location code) --
+  fcs0 : LPAR id 13, virtual slot C3
+  fcs1 : LPAR id 13, virtual slot C4
+  ent0 : LPAR id 13, virtual slot C2
+  ent1 : LPAR id 13, virtual slot C10
+
+-- MPIO paths (lspath) --
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi1
+Enabled hdisk0 fscsi1

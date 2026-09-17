@@ -627,7 +627,8 @@ class SSHManager:
             rc = stdout.channel.recv_exit_status()
             return {"ok": rc == 0, "output": out, "stderr": err, "exit_status": rc}
         except Exception as exc:
-            return {"ok": False, "error": f"Command failed: {exc}"}
+            err_msg = str(exc).strip() or type(exc).__name__
+            return {"ok": False, "error": f"Command failed: {err_msg}"}
         finally:
             try:
                 client.close()

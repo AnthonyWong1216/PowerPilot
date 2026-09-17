@@ -1,0 +1,24 @@
+[2026-09-17 16:17:48] [INFO] === TEST 'VIOS71B' START (mode: shutdown) ===
+[2026-09-17 16:17:48] [INFO] Auto-discovering client devices...
+[2026-09-17 16:17:49] [INFO] Adapter slot map written: /tmp/vios_res_aix14113_20260917_161748/adapter_slots_20260917_161748.txt
+[2026-09-17 16:17:49] [INFO] Inventory written: /tmp/vios_res_aix14113_20260917_161748/inventory_20260917_161748.txt
+[2026-09-17 16:17:49] [INFO] Capturing snapshot 'VIOS71B_before_shutdown' -> /tmp/vios_res_aix14113_20260917_161748/snapshot_VIOS71B_before_shutdown_20260917_161749.txt
+[2026-09-17 16:17:51] [INFO] Snapshot 'VIOS71B_before_shutdown' complete.
+[2026-09-17 16:18:50] [INFO] Operator confirmed VIOS is DOWN. Capturing evidence now...
+[2026-09-17 16:18:50] [INFO] Forcing path re-detection (cfgmgr + I/O) so the failed FC path shows up...
+[2026-09-17 16:18:56] [INFO] Failed path(s) confirmed after cfgmgr.
+[2026-09-17 16:18:56] [INFO] Monitoring for 180s. Ping target: 192.168.140.254
+[2026-09-17 16:18:56] [INFO] Multi-network monitor started (targets from /tmp/vios_res_net_targets.conf)
+[2026-09-17 16:21:56] [INFO] Monitor done. Ping losses: 0; Disk stalls/errors: 0
+[2026-09-17 16:21:56] [INFO] Capturing snapshot 'VIOS71B_after_shutdown' -> /tmp/vios_res_aix14113_20260917_161748/snapshot_VIOS71B_after_shutdown_20260917_162156.txt
+[2026-09-17 16:22:03] [WARN] Non-zero exit (1): Ping test en0 -> 192.168.141.12
+[2026-09-17 16:22:03] [INFO] Snapshot 'VIOS71B_after_shutdown' complete.
+[2026-09-17 16:22:03] [INFO] Down-state capture complete.
+[2026-09-17 16:27:24] [INFO] Operator confirmed VIOS is UP again. Capturing recovery evidence now...
+[2026-09-17 16:27:24] [INFO] Verifying path recovery (errpt + lspath)...
+[2026-09-17 16:27:24] [INFO] All paths Enabled again - recovery confirmed by lspath.
+[2026-09-17 16:27:24] [INFO] Capturing snapshot 'VIOS71B_after_restart' -> /tmp/vios_res_aix14113_20260917_161748/snapshot_VIOS71B_after_restart_20260917_162724.txt
+[2026-09-17 16:27:27] [INFO] Snapshot 'VIOS71B_after_restart' complete.
+[2026-09-17 16:27:27] [INFO] Recovery capture complete.
+[2026-09-17 16:27:27] [INFO] === TEST 'VIOS71B' DONE (mode: shutdown). Results in /tmp/vios_res_aix14113_20260917_161748 ===
+[2026-09-17 16:27:27] [INFO] Packaging results into /tmp/vios_res_aix14113_20260917_161748.tar

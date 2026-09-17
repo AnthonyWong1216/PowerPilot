@@ -79,6 +79,20 @@
   }
   #console-close-btn:hover { background: #c0392b; border-color: #c0392b; color: #fff; }
 
+  #console-disconnect-btn {
+    background: none;
+    border: 1px solid #555;
+    border-radius: 4px;
+    color: #aaa;
+    cursor: pointer;
+    padding: 3px 10px;
+    font-size: 13px;
+    flex-shrink: 0;
+    transition: background 0.15s, color 0.15s;
+  }
+  #console-disconnect-btn:hover { background: #d97706; border-color: #d97706; color: #fff; }
+  #console-disconnect-btn:disabled { opacity: .5; cursor: not-allowed; }
+
   #console-error-banner {
     display: none;
     padding: 10px 16px;
@@ -213,6 +227,7 @@
     <div id="console-modal-header">
       <span id="console-modal-title">LPAR Console</span>
       <span id="console-modal-status" class="status-connecting">Connecting…</span>
+      <button id="console-disconnect-btn" onclick="disconnectConsole()" title="Disconnect SSH session (keep console open)">🔌 Disconnect</button>
       <button id="console-close-btn" onclick="closeConsole()">✕ Close Console</button>
   
     <div id="console-error-banner"></div>
@@ -337,14 +352,14 @@ async function loadLPARs() {
         <button class="btn btn-xs btn-green"    onclick="confirmAction('${esc(p.id)}','${esc(p.name)}','activate')">On</button>
         <button class="btn btn-xs btn-orange"   onclick="confirmAction('${esc(p.id)}','${esc(p.name)}','softstop')">Stop</button>
         <button class="btn btn-xs btn-red"      onclick="confirmAction('${esc(p.id)}','${esc(p.name)}','shutdown')">Off</button>
-        <button class="btn btn-xs btn-red"      title="Immediate hard power off (no confirmation)"
+        <button class="btn btn-xs btn-red"      title="Immediate hard power off"
                 onclick="immediateShutdown('${esc(p.id)}','${esc(p.name)}')">⚡Off</button>
         <button class="btn btn-xs btn-secondary" onclick="confirmAction('${esc(p.id)}','${esc(p.name)}','restart')">↺</button>
 
       </td>
     </tr>`).join("");
-  
-  populateManagedSystems(); 
+
+  populateManagedSystems();
 }
 
 function esc(s) { return (s||"").replace(/'/g,"\\'"); }
@@ -839,32 +854,44 @@ async function runLparAction(lparId, action) {
   }
 }
 
-// ── Immediate hard power off (no confirmation modal) ──────
-// Directly invokes the backend "shutdown" action (chsysstate -o shutdown --immed).
-async function immediateShutdown(lparId, name) {
+// ── Immediate hard power off — with confirmation ────────────
+// Shows a confirm/cancel dialog before sending the power off command.
+function immediateShutdown(lparId, name) {
   const hmcId = localHMCId || window.activeHMCId;
   if (!hmcId || !currentSystemId) {
     showToast("Select an HMC and managed system first", "warn");
     return;
   }
 
-  showToast(`Immediate power off: ${name}…`, "info");
-  try {
-    const r = await fetch(
-      `/api/hmcs/${hmcId}/managed-systems/${currentSystemId}/lpars/${encodeURIComponent(lparId)}/action`,
-      { method:"POST", headers:{"Content-Type":"application/json"},
-        body:JSON.stringify({ action:"shutdown" }) }
-    );
-    const d = await r.json();
-    if (d.ok) {
-      showToast(`✓ ${name} power off submitted`, "success");
-      loadLPARs();
-    } else {
-      showToast(`✗ ${d.error || "Power off failed"}`, "error");
+  document.getElementById("lam-title").textContent = "Immediate Shutdown LPAR";
+  document.getElementById("lam-msg").innerHTML =
+    `<span style="color:var(--red)"><strong>⚡ Immediate hard power off</strong></span> LPAR <strong>${name}</strong>?<br>` +
+    `<span style="font-size:12px;color:var(--muted)">This sends an immediate shutdown command with no graceful OS stop.</span>`;
+  document.getElementById("lam-result").classList.add("hidden");
+  document.getElementById("lam-activate-opts").style.display = "none";
+
+  document.getElementById("lam-confirm-btn").onclick = async () => {
+    const res = document.getElementById("lam-result");
+    res.className = "result-box info"; res.textContent = "Executing…"; res.classList.remove("hidden");
+
+    try {
+      const r = await fetch(
+        `/api/hmcs/${hmcId}/managed-systems/${currentSystemId}/lpars/${encodeURIComponent(lparId)}/action`,
+        { method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({ action:"shutdown" }) }
+      );
+      const d = await r.json();
+      if (d.ok) {
+        res.className = "result-box success"; res.textContent = "✔ Immediate shutdown submitted";
+        setTimeout(() => { closeModal("lpar-action-modal"); loadLPARs(); }, 1500);
+      } else {
+        res.className = "result-box error"; res.textContent = "✗ " + (d.error || "Power off failed");
+      }
+    } catch (e) {
+      res.className = "result-box error"; res.textContent = "✗ Network error: " + e;
     }
-  } catch (e) {
-    showToast(`✗ Network error: ${e}`, "error");
-  }
+  };
+  document.getElementById("lpar-action-modal").classList.remove("hidden");
 }
 
 function closeModal(id) { document.getElementById(id).classList.add("hidden"); }
@@ -954,6 +981,7 @@ function openConsole(lparName) {
     `Console — ${lparName}  [${sysId}]`;
   _consoleSetStatus("Connecting…", "status-connecting");
   _consoleShowError("");
+  document.getElementById("console-disconnect-btn").disabled = false;
 
   // ── Initialise xterm.js ───────────────────────────────
   const termEl = document.getElementById("console-terminal");
@@ -1078,6 +1106,18 @@ function closeConsole() {
   }
   _destroyConsole();
   document.getElementById("console-modal-overlay").classList.remove("visible");
+}
+
+// ── disconnectConsole() — disconnect session but keep modal open ──
+function disconnectConsole() {
+  if (_consoleSocket && _consoleSocket.connected) {
+    _consoleSocket.emit("vterm_close");
+    _consoleSocket.disconnect();
+  }
+  document.getElementById("console-disconnect-btn").disabled = true;
+  if (_consoleTerm) {
+    _consoleTerm.writeln("\r\n\x1b[33m[PowerPilot] Console session disconnected by user.\x1b[0m");
+  }
 }
 
 // ── _destroyConsole() — tear-down helper ──────────────────

@@ -1,0 +1,7 @@
+------------------------------------------------------------
+Server listening on TCP port 5201
+TCP window size:  640 KByte (default)
+------------------------------------------------------------
+[  4] local 192.168.141.13 port 5201 connected with 192.168.141.12 port 32794
+[ ID] Interval       Transfer     Bandwidth
+[  4]  0.0-10.0 sec  14.6 GBytes  12.5 Gbits/sec

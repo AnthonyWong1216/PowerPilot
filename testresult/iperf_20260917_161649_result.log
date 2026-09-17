@@ -1,0 +1,59 @@
+================================================================================
+Network Throughput Test Results
+================================================================================
+Test Date: Thu Sep 17 16:16:49 HKT 2026
+Hostname: pha12
+AIX Version: 7200-05-11-2546
+iperf Command: iperf
+
+
+================================================================================
+Starting Network Throughput Test - CLIENT MODE
+================================================================================
+
+[INFO] Target Server: 192.168.141.13
+[INFO] Port: 5201
+[INFO] Using: iperf
+[INFO] Test Duration: 10s per test
+
+[INFO] Testing connectivity to 192.168.141.13...
+[INFO] Connectivity OK
+
+
+================================================================================
+TCP Throughput Test
+================================================================================
+
+[INFO] Testing TCP throughput...
+------------------------------------------------------------
+Client connecting to 192.168.141.13, TCP port 5201
+TCP window size:  256 KByte (default)
+------------------------------------------------------------
+[  3] local 192.168.141.12 port 32794 connected with 192.168.141.13 port 5201
+[ ID] Interval       Transfer     Bandwidth
+[  3]  0.0-10.0 sec  14.6 GBytes  12.5 Gbits/sec
+
+
+================================================================================
+UDP Throughput Test
+================================================================================
+
+[INFO] Testing UDP throughput with bandwidth: 1G
+------------------------------------------------------------
+Client connecting to 192.168.141.13, UDP port 5201
+Sending 1470 byte datagrams, IPG target: 11.76 us (kalman adjust)
+UDP buffer size: 9.00 KByte (default)
+------------------------------------------------------------
+[  3] local 192.168.141.12 port 33120 connected with 192.168.141.13 port 5201
+read failed: Connection refused
+[  3] WARNING: did not receive ack of last datagram after 1 tries.
+[ ID] Interval       Transfer     Bandwidth
+[  3]  0.0-10.0 sec  1.16 GBytes  1000 Mbits/sec
+[  3] Sent 850339 datagrams
+
+
+================================================================================
+Network Throughput Tests Complete
+================================================================================
+
+[INFO] Results saved to: /tmp/pha12_network_throughput/20260917_161649_result.log

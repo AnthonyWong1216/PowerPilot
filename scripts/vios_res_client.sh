@@ -515,10 +515,14 @@ function f_discover {
 #   en1=10.2.2.1
 #   en2=192.168.1.1
 # Returns: populates associative-like variables v_net_target_<iface>=<ip>
+#          and v_net_target_ifaces (space-separated list of ALL interface keys
+#          found in the config file, regardless of whether they are active on
+#          this LPAR). This ensures every user-supplied ping target is tested.
 function f_load_net_targets {
     if [[ ! -f "${v_net_targets_file}" ]]; then
         return 1
     fi
+    v_net_target_ifaces=""
     # Read file and set variables
     while IFS='=' read v_iface v_ip; do
         # Skip comments and empty lines
@@ -526,7 +530,9 @@ function f_load_net_targets {
         [[ -z "${v_iface}" ]] && continue
         v_iface=$(echo "${v_iface}" | tr -d ' ')
         v_ip=$(echo "${v_ip}" | tr -d ' ')
+        [[ -z "${v_ip}" ]] && continue
         eval "v_net_target_${v_iface}=\"${v_ip}\""
+        v_net_target_ifaces="${v_net_target_ifaces} ${v_iface}"
     done < "${v_net_targets_file}"
     return 0
 }
@@ -684,9 +690,12 @@ function f_snapshot {
     f_run "netstat -rn" "${v_snap}" "Routing table"
 
     # --- Multi-network ping test (if targets configured) ---
+    # Iterate over ALL targets from the config file (v_net_target_ifaces),
+    # not just the discovered interfaces (v_net_ifaces), so that every
+    # user-supplied IP is tested even if the LPAR has fewer active en* devices.
     if [[ -f "${v_net_targets_file}" ]]; then
         f_load_net_targets
-        for v_if in ${v_net_ifaces}; do
+        for v_if in ${v_net_target_ifaces}; do
             v_tgt=$(f_get_net_target "${v_if}")
             if [[ -n "${v_tgt}" ]]; then
                 f_run "ping -c 3 -w 5 ${v_tgt} 2>&1" "${v_snap}" "Ping test ${v_if} -> ${v_tgt}"
@@ -748,13 +757,16 @@ function f_monitor {
     v_ping_pid=$!
 
     # --- background multi-network ping (if targets configured) ---
+    # Use v_net_target_ifaces (all config entries) instead of v_net_ifaces
+    # (discovered active interfaces) so every user-supplied IP is tested.
     v_multinet_pid=""
     if [[ -f "${v_net_targets_file}" ]]; then
         f_load_net_targets
+        v_cfg_ifaces="${v_net_target_ifaces}"
         (
             v_end=$(( $(date +%s) + v_secs ))
             while [[ $(date +%s) -lt ${v_end} ]]; do
-                for v_if in ${v_net_ifaces}; do
+                for v_if in ${v_cfg_ifaces}; do
                     v_tgt=$(f_get_net_target "${v_if}")
                     if [[ -n "${v_tgt}" ]]; then
                         v_reply=$(ping -c 1 -w 2 "${v_tgt}" 2>/dev/null | grep -i "time=")
@@ -864,13 +876,16 @@ function f_monitor_restart {
     fi
 
     # --- background multi-network ping (if targets configured) ---
+    # Use v_net_target_ifaces (all config entries) instead of v_net_ifaces
+    # (discovered active interfaces) so every user-supplied IP is tested.
     v_bg_multinet_pid=""
     if [[ -f "${v_net_targets_file}" ]]; then
         f_load_net_targets
+        v_cfg_ifaces="${v_net_target_ifaces}"
         (
             v_end=$(( $(date +%s) + v_mon_secs + ${t_restart_timeout} ))
             while [[ $(date +%s) -lt ${v_end} ]]; do
-                for v_if in ${v_net_ifaces}; do
+                for v_if in ${v_cfg_ifaces}; do
                     v_tgt=$(f_get_net_target "${v_if}")
                     if [[ -n "${v_tgt}" ]]; then
                         v_reply=$(ping -c 1 -w 2 "${v_tgt}" 2>/dev/null | grep -i "time=")

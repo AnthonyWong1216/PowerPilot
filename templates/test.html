@@ -1,127 +1,343 @@
 {% extends "base.html" %}
 {% block title %}Test{% endblock %}
-{% block page_title %}VIOS Resilience Test{% endblock %}
+{% block page_title %}Test Center{% endblock %}
 {% block content %}
+
+<!-- STEP 1: SELECT TESTS -->
 <div class="card">
-  <div class="card-title"><span class="step-icon">📤</span> Step 1 — Deploy Script to Target LPAR</div>
-  <p class="muted">Deploy <code>vios_res_client.sh</code> to a target AIX LPAR via SFTP. The actual
-     VIOS shutdown/restart test must be run <strong>manually</strong> by you in an SSH/console
-     session, since it requires you to trigger the VIOS shutdown/restart on the HMC at the right
-     moment. After deploying, you'll get the exact command to run yourself.</p>
-  <form id="test-form" class="test-form">
+  <div class="card-title"><span class="step-icon">&#x1f9ea;</span> Step 1 &mdash; Select Tests</div>
+  <p class="muted">Choose one or more tests to run against your AIX LPARs. Each selected test will expand its configuration panel below.</p>
 
-    <label class="fld-row">
-      <span class="fld-label">Target LPAR IP / Host</span>
-      <input id="t-host" type="text" required placeholder="10.0.0.20" class="fld">
+  <div class="test-selector">
+    <label class="test-checkbox-row">
+      <input type="checkbox" id="chk-iperf" class="test-chk">
+      <div class="test-chk-info">
+        <span class="test-chk-title">&#x1f310; Network Throughput (iperf)</span>
+        <span class="test-chk-desc">Measure TCP &amp; UDP bandwidth between two LPARs using iperf. Auto-deploys iperf package if not installed.</span>
+      </div>
     </label>
-    <label class="fld-row">
-      <span class="fld-label">Username</span>
-      <input id="t-user" type="text" required value="root" class="fld">
-    </label>
-    <label class="fld-row">
-      <span class="fld-label">Password</span>
-      <input id="t-pass" type="password" placeholder="••••••••" class="fld">
-    </label>
-    <label class="fld-row">
-      <span class="fld-label">Port</span>
-      <input id="t-port" type="number" value="22" class="fld">
-    </label>
-    <label class="fld-row">
-      <span class="fld-label">Test Label (VIOS name)</span>
-      <input id="t-label" type="text" required placeholder="vios1" class="fld">
-    </label>
-    <label class="fld-row">
-      <span class="fld-label">Mode</span>
-      <select id="t-mode" class="fld">
-        <option value="shutdown">shutdown</option>
-        <option value="restart">restart</option>
-      </select>
-    </label>
-    <label class="fld-row">
-      <span class="fld-label">Monitor (seconds)</span>
-      <input id="t-secs" type="number" value="180" class="fld">
-    </label>
-    <label class="fld-row">
-      <span class="fld-label">Remote Target Dir</span>
-      <input id="t-path" type="text" value="/tmp" class="fld">
-    </label>
-    <div style="margin-top:16px;">
-      <button type="submit" id="t-run" class="btn-accent">Deploy Script</button>
-      <span id="t-status" class="muted" style="margin-left:12px;"></span>
-    </div>
-  </form>
-  <div id="t-steps" style="margin-top:16px;"></div>
 
-  <div id="t-manual" style="display:none;margin-top:16px;padding:14px 16px;
-       border:1px solid var(--border);border-radius:6px;background:#fffbe6;">
-    <div style="font-weight:600;margin-bottom:8px;"><span class="step-icon">🖥️</span> Step 2 — Run the test manually on the LPAR</div>
+    <label class="test-checkbox-row">
+      <input type="checkbox" id="chk-vios-net" class="test-chk">
+      <div class="test-chk-info">
+        <span class="test-chk-title">&#x1f504; VIOS Network Resilience</span>
+        <span class="test-chk-desc">Verify network connectivity (ping, interface status) survives a VIOS shutdown or restart. Captures before/during/after evidence.</span>
+      </div>
+    </label>
 
-    <p class="muted" style="margin:0 0 8px;">
-      Open an SSH session or console to the target LPAR, then run the command below.
-      When the script prints <code>&gt;&gt;&gt; SHUT DOWN/RESTART THE TARGET VIOS NOW &lt;&lt;&lt;</code>,
-      go trigger that VIOS shutdown/restart manually from the HMC.
-      Wait for the script to finish and package the results (<code>tar.gz</code>) before
-      clicking "Fetch Results" below.
-    </p>
-    <div style="display:flex;gap:8px;align-items:flex-start;">
-      <code id="t-manual-cmd" style="display:block;flex:1;background:#222;color:#e8e8e8;
-            padding:10px 12px;border-radius:4px;font-size:12.5px;white-space:pre-wrap;
-            word-break:break-all;"></code>
-      <button type="button" id="t-copy-cmd" class="btn-plain" style="white-space:nowrap;">Copy</button>
-    </div>
-  </div>
+    <label class="test-checkbox-row">
+      <input type="checkbox" id="chk-vios-fc" class="test-chk">
+      <div class="test-chk-info">
+        <span class="test-chk-title">&#x1f5c4;&#xfe0f; VIOS Fibre Channel Resilience</span>
+        <span class="test-chk-desc">Verify disk I/O and FC path (lspath/hdisk) failover during a VIOS shutdown or restart. Tests MPIO path recovery and chpath.</span>
+      </div>
+    </label>
 
-  <div id="t-fetch-section" style="display:none;margin-top:16px;">
-    <div style="font-weight:600;margin-bottom:8px;"><span class="step-icon">📥</span> Step 3 — Fetch Results</div>
+    <label class="test-checkbox-row">
+      <input type="checkbox" id="chk-cpu-mem" class="test-chk">
+      <div class="test-chk-info">
+        <span class="test-chk-title">&#x2699;&#xfe0f; CPU &amp; Memory Benchmark</span>
+        <span class="test-chk-desc">Run mt_cpu_benchmark.pl and mt_mem_benchmark.pl to measure CPU operations/sec and memory bandwidth.</span>
+      </div>
+    </label>
 
-    <p class="muted" style="margin:0 0 8px;">
-      Once the manual test run has completed on the LPAR, click below to locate the newest
-      <code>vios_res_*.tar.gz</code> on the target host and download it into <code>testresult/</code>.
-    </p>
-    <button type="button" id="t-fetch" class="btn-accent">Fetch Results</button>
-    <span id="t-fetch-status" class="muted" style="margin-left:12px;"></span>
-    <div id="t-fetch-steps" style="margin-top:12px;"></div>
+    <label class="test-checkbox-row">
+      <input type="checkbox" id="chk-io" class="test-chk">
+      <div class="test-chk-info">
+        <span class="test-chk-title">&#x1f4c0; I/O Performance</span>
+        <span class="test-chk-desc">Disk I/O benchmark using fio (sequential read/write, random read) with configurable block sizes and test directory.</span>
+      </div>
+    </label>
   </div>
 </div>
 
+<!-- iperf Config Panel -->
+<div class="card test-panel" id="panel-iperf" style="display:none;">
+  <div class="card-title"><span class="step-icon">&#x1f310;</span> Network Throughput (iperf) &mdash; Configuration</div>
+  <p class="muted" style="margin-bottom:14px;">
+    Provide connection details for <strong>two LPARs</strong>: one runs iperf server, the other runs
+    the client test. PowerPilot SSHes into both, deploys iperf if needed, runs the test, and fetches results.
+  </p>
+  <div class="iperf-dual-form">
+    <fieldset class="lpar-fieldset">
+      <legend>Server LPAR (iperf -s)</legend>
+      <label class="fld-row"><span class="fld-label">IP / Hostname</span>
+        <input id="iperf-srv-host" type="text" placeholder="10.0.0.10" class="fld"></label>
+      <label class="fld-row"><span class="fld-label">Username</span>
+        <input id="iperf-srv-user" type="text" value="root" class="fld"></label>
+      <label class="fld-row"><span class="fld-label">Password</span>
+        <input id="iperf-srv-pass" type="password" placeholder="&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;" class="fld"></label>
+      <label class="fld-row"><span class="fld-label">SSH Port</span>
+        <input id="iperf-srv-port" type="number" value="22" class="fld"></label>
+    </fieldset>
+    <fieldset class="lpar-fieldset">
+      <legend>Client LPAR (iperf -c)</legend>
+      <label class="fld-row"><span class="fld-label">IP / Hostname</span>
+        <input id="iperf-cli-host" type="text" placeholder="10.0.0.20" class="fld"></label>
+      <label class="fld-row"><span class="fld-label">Username</span>
+        <input id="iperf-cli-user" type="text" value="root" class="fld"></label>
+      <label class="fld-row"><span class="fld-label">Password</span>
+        <input id="iperf-cli-pass" type="password" placeholder="&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;" class="fld"></label>
+      <label class="fld-row"><span class="fld-label">SSH Port</span>
+        <input id="iperf-cli-port" type="number" value="22" class="fld"></label>
+    </fieldset>
+  </div>
+  <div class="test-form" style="margin-top:12px;">
+    <div style="font-weight:600;font-size:.85rem;margin-bottom:8px;">Test Parameters</div>
+    <label class="fld-row"><span class="fld-label">iperf Port</span>
+      <input id="iperf-port" type="number" value="5201" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Duration (seconds)</span>
+      <input id="iperf-duration" type="number" value="10" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">UDP Bandwidth</span>
+      <input id="iperf-udp-bw" type="text" value="1G" class="fld" placeholder="e.g. 1G, 500M"></label>
+  </div>
+</div>
 
+<!-- VIOS Network Resilience Config Panel -->
+<div class="card test-panel" id="panel-vios-net" style="display:none;">
+  <div class="card-title"><span class="step-icon">&#x1f504;</span> VIOS Network Resilience &mdash; Configuration</div>
+  <p class="muted" style="margin-bottom:14px;">
+    Deploy <code>vios_res_client.sh</code> to a target <strong>client LPAR</strong>. Monitors network
+    interfaces (ping, entstat) before/during/after a VIOS shutdown or restart.
+    <strong>You must trigger the VIOS action on the HMC manually</strong> when prompted.
+  </p>
+  <div class="test-form">
+    <label class="fld-row"><span class="fld-label">Target LPAR IP / Host</span>
+      <input id="vnet-host" type="text" placeholder="10.0.0.20" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Username</span>
+      <input id="vnet-user" type="text" value="root" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Password</span>
+      <input id="vnet-pass" type="password" placeholder="&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">SSH Port</span>
+      <input id="vnet-port" type="number" value="22" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Test Label (VIOS name)</span>
+      <input id="vnet-label" type="text" placeholder="vios1" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Mode</span>
+      <select id="vnet-mode" class="fld"><option value="shutdown">shutdown</option><option value="restart">restart</option></select></label>
+    <label class="fld-row"><span class="fld-label">Monitor (seconds)</span>
+      <input id="vnet-secs" type="number" value="180" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Remote Target Dir</span>
+      <input id="vnet-path" type="text" value="/tmp" class="fld"></label>
+  </div>
+
+  <!-- Ping Target IPs -->
+  <div style="margin-top:16px;max-width:560px;">
+    <div style="display:flex;align-items:center;gap:8px;margin-bottom:8px;">
+      <span class="fld-label" style="margin:0;font-size:13px;">&#x1f3af; Ping Target IPs</span>
+      <button type="button" id="vnet-add-target" class="btn-accent" style="padding:2px 8px;font-size:16px;line-height:1;border-radius:50%;min-width:26px;" title="Add ping target IP">+</button>
+    </div>
+    <p class="muted" style="font-size:11.5px;margin-bottom:8px;">
+      Optional: add IP addresses to ping during the test (e.g. gateways, remote hosts).
+      Each IP is mapped to a network interface (en0, en1, &hellip;) on the target LPAR.
+    </p>
+    <div id="vnet-targets-list"></div>
+  </div>
+</div>
+
+<!-- VIOS FC Resilience Config Panel -->
+<div class="card test-panel" id="panel-vios-fc" style="display:none;">
+  <div class="card-title"><span class="step-icon">&#x1f5c4;&#xfe0f;</span> VIOS Fibre Channel Resilience &mdash; Configuration</div>
+  <p class="muted" style="margin-bottom:14px;">
+    Deploy <code>vios_res_client.sh</code> to a target <strong>client LPAR</strong>. Monitors FC
+    adapters (fcs*), disk paths (lspath/hdisk*), and I/O continuity before/during/after a VIOS
+    shutdown or restart. <strong>You must trigger the VIOS action on the HMC manually</strong> when prompted.
+  </p>
+  <p class="muted" style="margin-bottom:14px;font-size:12px;color:var(--orange);">
+    <strong>Note:</strong> If you also selected &ldquo;VIOS Network Resilience&rdquo; on the same LPAR,
+    both network and FC monitoring run together in one execution &mdash; the script captures everything.
+  </p>
+  <div class="test-form">
+    <label class="fld-row"><span class="fld-label">Target LPAR IP / Host</span>
+      <input id="vfc-host" type="text" placeholder="10.0.0.20" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Username</span>
+      <input id="vfc-user" type="text" value="root" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Password</span>
+      <input id="vfc-pass" type="password" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">SSH Port</span>
+      <input id="vfc-port" type="number" value="22" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Test Label (VIOS name)</span>
+      <input id="vfc-label" type="text" placeholder="vios1" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Mode</span>
+      <select id="vfc-mode" class="fld"><option value="shutdown">shutdown</option><option value="restart">restart</option></select></label>
+    <label class="fld-row"><span class="fld-label">Monitor (seconds)</span>
+      <input id="vfc-secs" type="number" value="180" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Remote Target Dir</span>
+      <input id="vfc-path" type="text" value="/tmp" class="fld"></label>
+  </div>
+</div>
+
+<!-- CPU & Memory Config Panel -->
+<div class="card test-panel" id="panel-cpu-mem" style="display:none;">
+  <div class="card-title"><span class="step-icon">&#x2699;&#xfe0f;</span> CPU &amp; Memory Benchmark &mdash; Configuration</div>
+  <p class="muted" style="margin-bottom:14px;">
+    Deploy <code>test_cpu_memory.sh</code>, <code>mt_cpu_benchmark.pl</code>, and
+    <code>mt_mem_benchmark.pl</code> to the target LPAR and run CPU + memory benchmarks.
+  </p>
+  <div class="test-form">
+    <label class="fld-row"><span class="fld-label">Target LPAR IP / Host</span>
+      <input id="cpu-host" type="text" placeholder="10.0.0.20" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Username</span>
+      <input id="cpu-user" type="text" value="root" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Password</span>
+      <input id="cpu-pass" type="password" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">SSH Port</span>
+      <input id="cpu-port" type="number" value="22" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Remote Target Dir</span>
+      <input id="cpu-path" type="text" value="/tmp" class="fld"></label>
+  </div>
+</div>
+
+<!-- I/O Performance Config Panel -->
+<div class="card test-panel" id="panel-io" style="display:none;">
+  <div class="card-title"><span class="step-icon">&#x1f4c0;</span> I/O Performance &mdash; Configuration</div>
+  <p class="muted" style="margin-bottom:14px;">
+    Deploy <code>test_io_performance.sh</code> (and optionally fio) to the target LPAR and run
+    disk I/O benchmarks (sequential read/write, random read).
+  </p>
+  <div class="test-form">
+    <label class="fld-row"><span class="fld-label">Target LPAR IP / Host</span>
+      <input id="io-host" type="text" placeholder="10.0.0.20" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Username</span>
+      <input id="io-user" type="text" value="root" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Password</span>
+      <input id="io-pass" type="password" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">SSH Port</span>
+      <input id="io-port" type="number" value="22" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Test Directory</span>
+      <input id="io-dir" type="text" value="/tmp/aix_test_data" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Remote Target Dir</span>
+      <input id="io-path" type="text" value="/tmp" class="fld"></label>
+  </div>
+</div>
+
+<!-- STEP 2 ACTIONS -->
+<div class="card" id="action-card" style="display:none;">
+  <div class="card-title"><span class="step-icon">&#x25b6;&#xfe0f;</span> Step 2 &mdash; Run Selected Tests</div>
+  <p class="muted" id="action-summary"></p>
+  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;">
+    <button type="button" id="btn-run-tests" class="btn-accent">Run Selected Tests</button>
+    <span id="run-status" class="muted" style="margin-left:8px;"></span>
+  </div>
+  <div id="run-steps" style="margin-top:16px;"></div>
+  <div id="run-manual" style="display:none;margin-top:16px;padding:14px 16px;border:1px solid var(--border);border-radius:6px;background:#fffbe6;">
+    <div style="font-weight:600;margin-bottom:8px;"><span class="step-icon">&#x1f5a5;&#xfe0f;</span> Manual Action Required</div>
+    <p class="muted" style="margin:0 0 8px;">For VIOS resilience tests, run the command below on the target LPAR, then trigger the VIOS shutdown/restart from the HMC when prompted.</p>
+    <div style="display:flex;gap:8px;align-items:flex-start;">
+      <code id="run-manual-cmd" style="display:block;flex:1;background:#222;color:#e8e8e8;padding:10px 12px;border-radius:4px;font-size:12.5px;white-space:pre-wrap;word-break:break-all;"></code>
+      <button type="button" id="btn-copy-cmd" class="btn-plain">Copy</button>
+    </div>
+  </div>
+  <div id="fetch-section" style="display:none;margin-top:16px;">
+    <div style="font-weight:600;margin-bottom:8px;"><span class="step-icon">&#x1f4e5;</span> Fetch Results from Target</div>
+    <p class="muted" style="margin:0 0 8px;">After all tests complete, click below to download the result archives.</p>
+    <button type="button" id="btn-fetch-inline" class="btn-accent">Fetch Results</button>
+    <span id="fetch-status-inline" class="muted" style="margin-left:12px;"></span>
+    <div id="fetch-steps-inline" style="margin-top:12px;"></div>
+  </div>
+</div>
+
+<!-- STEP 3: FETCH RESULTS (always visible) -->
+<div class="card">
+  <div class="card-title"><span class="step-icon">&#x1f4e5;</span> Step 3 &mdash; Fetch Results from Target LPAR</div>
+  <p class="muted" style="margin-bottom:14px;">
+    Enter the connection details of the LPAR where the test ran. PowerPilot will SSH in,
+    locate the newest <code>vios_res_*.tar.gz</code> archive in <code>/tmp</code>, and download it.
+  </p>
+  <div class="test-form">
+    <label class="fld-row"><span class="fld-label">Target LPAR IP / Host</span>
+      <input id="fetch-host" type="text" placeholder="10.0.0.20" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Username</span>
+      <input id="fetch-user" type="text" value="root" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">Password</span>
+      <input id="fetch-pass" type="password" placeholder="&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;&#x2022;" class="fld"></label>
+    <label class="fld-row"><span class="fld-label">SSH Port</span>
+      <input id="fetch-port" type="number" value="22" class="fld"></label>
+  </div>
+  <div style="margin-top:12px;display:flex;gap:10px;align-items:center;">
+    <button type="button" id="btn-fetch" class="btn-accent">Fetch Results</button>
+    <span id="fetch-status" class="muted" style="margin-left:8px;"></span>
+  </div>
+  <div id="fetch-steps" style="margin-top:12px;"></div>
+</div>
+
+<!-- RESULTS -->
 <div class="card">
   <div class="card-title" style="display:flex;justify-content:space-between;align-items:center;">
     <span>Test Results</span>
-    <button id="t-refresh" class="btn-plain">Refresh</button>
+    <button id="btn-refresh" class="btn-plain">Refresh</button>
   </div>
   <div id="report-status" class="muted"></div>
-
-  <h3 style="margin:14px 0 6px;font-size:.95rem;">Downloaded Tarball Results (.tar.gz)</h3>
-  <p class="muted" style="margin:0 0 8px;font-size:12.5px;">
-    Archives fetched from a target LPAR after a test run. Click <strong>Generate Report</strong>
-    beside an archive to build the consolidated Word report from every archive currently here.
+  <p class="muted" style="margin:4px 0 12px;font-size:12.5px;">
+    Archives and logs fetched from target LPARs, grouped by test type.
+    Use <strong class="rpt-plus-demo">+</strong> to select files, then <strong>Generate Report</strong> to build a Word report from the selected items.
   </p>
-  <div id="archives-list" class="muted">Loading…</div>
-
+  <div id="archives-list" class="muted">Loading&hellip;</div>
+  <div id="consolidated-bar" class="rpt-consolidated-bar" style="display:none;">
+    <button id="btn-consolidated" class="btn-accent" style="font-size:13px;padding:7px 18px;">
+      📋 Generate Consolidated Report
+    </button>
+    <span class="muted" style="font-size:12px;margin-left:8px;">Merges all checked files across every group into one Word document.</span>
+  </div>
   <h3 style="margin:18px 0 6px;font-size:.95rem;">Reports (.docx)</h3>
-  <div id="reports-list" class="muted">—</div>
+  <div id="reports-list" class="muted">&mdash;</div>
 </div>
 
-
 <style>
-  /* One field per row: label on the left, input on the right, neatly aligned. */
+  .test-selector{max-width:680px;}
+  .test-checkbox-row{display:flex;align-items:flex-start;gap:12px;padding:12px 14px;border:1px solid var(--border);border-radius:6px;margin-bottom:8px;cursor:pointer;transition:background .15s,border-color .15s;}
+  .test-checkbox-row:hover{background:var(--blue-bg);border-color:var(--accent);}
+  .test-checkbox-row input[type="checkbox"]{margin-top:3px;width:18px;height:18px;accent-color:var(--accent);flex-shrink:0;}
+  .test-chk-info{display:flex;flex-direction:column;gap:2px;}
+  .test-chk-title{font-weight:600;font-size:14px;}
+  .test-chk-desc{font-size:12.5px;color:var(--muted);line-height:1.45;}
+  .test-panel{border-left:3px solid var(--accent);}
   .test-form{max-width:560px;}
   .fld-row{display:flex;align-items:center;gap:12px;margin-bottom:10px;}
   .fld-row .fld-label{flex:0 0 170px;margin-bottom:0;text-align:right;}
   .fld-row .fld{flex:1;}
   .fld-label{display:block;font-size:12px;font-weight:600;margin-bottom:3px;}
   .fld{width:100%;padding:7px 9px;border:1px solid var(--border);border-radius:4px;box-sizing:border-box;}
+  .iperf-dual-form{display:flex;gap:20px;flex-wrap:wrap;}
+  .lpar-fieldset{flex:1;min-width:260px;border:1px solid var(--border);border-radius:6px;padding:14px 16px;}
+  .lpar-fieldset legend{font-weight:600;font-size:13px;padding:0 6px;color:var(--accent);}
+  .lpar-fieldset .fld-row .fld-label{flex:0 0 120px;}
   .step-icon{display:inline-block;margin-right:6px;font-size:1.05em;}
-
-  .btn-accent{padding:8px 16px;border:none;background:var(--accent);color:#fff;border-radius:4px;cursor:pointer;}
+  .btn-accent{padding:8px 16px;border:none;background:var(--accent);color:#fff;border-radius:4px;cursor:pointer;font-size:13px;}
   .btn-accent:disabled{opacity:.6;cursor:not-allowed;}
-  .btn-plain{padding:6px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;}
+  .btn-plain{padding:6px 12px;border:1px solid var(--border);background:#fff;border-radius:4px;cursor:pointer;font-size:13px;}
   .step-row{padding:8px 11px;border-radius:4px;margin-bottom:8px;font-size:13px;border:1px solid var(--border);}
   .step-ok{background:#e6f4ea;border-color:#b6dfc2;}
   .step-fail{background:#fdecea;border-color:#f3c0bb;}
+  .step-info{background:var(--blue-bg);border-color:#93c5fd;}
   .step-out{font-family:monospace;font-size:11px;white-space:pre-wrap;margin-top:6px;max-height:200px;overflow:auto;color:#333;}
   .res-row{display:flex;justify-content:space-between;align-items:center;padding:7px 10px;border-bottom:1px solid var(--border);}
+
+  /* ── Grouped result sections ── */
+  .rpt-group{border:1px solid var(--border);border-radius:6px;margin-bottom:14px;overflow:hidden;}
+  .rpt-group-hdr{display:flex;justify-content:space-between;align-items:center;padding:10px 14px;background:var(--bg);border-bottom:1px solid var(--border);gap:10px;}
+  .rpt-group-title{font-weight:600;font-size:13.5px;display:flex;align-items:center;gap:7px;}
+  .rpt-group-actions{display:flex;align-items:center;gap:8px;flex-shrink:0;}
+  .rpt-group-body{padding:0;}
+  .rpt-file-row{display:flex;align-items:center;gap:10px;padding:7px 14px;border-bottom:1px solid var(--border);font-size:13px;}
+  .rpt-file-row:last-child{border-bottom:none;}
+  .rpt-file-chk{width:16px;height:16px;accent-color:var(--accent);cursor:pointer;flex-shrink:0;}
+  .rpt-file-name{flex:1;font-family:monospace;font-size:12px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+  .rpt-file-size{color:var(--muted);font-size:11px;flex-shrink:0;min-width:60px;text-align:right;}
+  .rpt-file-actions{display:flex;gap:5px;flex-shrink:0;}
+  .rpt-plus-demo{display:inline-block;background:var(--accent);color:#fff;width:18px;height:18px;line-height:18px;text-align:center;border-radius:3px;font-size:13px;}
+  .rpt-count{font-size:11px;color:var(--muted);font-weight:400;}
+  .rpt-gen-btn{padding:5px 12px;border:1px solid var(--accent);background:#fff;color:var(--accent);border-radius:4px;cursor:pointer;font-size:12px;font-weight:600;transition:background .15s,color .15s;}
+  .rpt-gen-btn:hover{background:var(--accent);color:#fff;}
+  .rpt-gen-btn:disabled{opacity:.5;cursor:not-allowed;}
+  .rpt-empty{padding:14px;color:var(--muted);font-size:12.5px;text-align:center;}
+  .rpt-consolidated-bar{display:flex;align-items:center;padding:12px 14px;margin-top:14px;border:2px dashed var(--accent);border-radius:6px;background:var(--blue-bg);}
+
+  /* ── Ping target IP rows ── */
+  .ping-target-row{display:flex;align-items:center;gap:8px;margin-bottom:6px;}
+  .ping-target-row .fld{flex:1;max-width:260px;}
+  .ping-target-row .ping-iface{font-family:monospace;font-size:12px;color:var(--muted);min-width:36px;text-align:right;}
+  .ping-target-del{background:none;border:1px solid var(--border);border-radius:4px;color:var(--red);cursor:pointer;padding:3px 8px;font-size:14px;line-height:1;transition:background .15s;}
+  .ping-target-del:hover{background:var(--red-bg);}
 </style>
 {% endblock %}
 

@@ -3,23 +3,39 @@
 # Network Throughput Test Script for AIX/VIOS
 # Description: Simple network throughput test using iperf (TCP and UDP only)
 # Usage: 
-#   Server mode: ./test_network_throughput.sh server
-#   Client mode: ./test_network_throughput.sh client <server_ip>
+#   Server mode: ./test_network_throughput.sh server [iperf_port] [timestamp]
+#   Client mode: ./test_network_throughput.sh client <server_ip> [iperf_port] [duration] [udp_bw] [timestamp]
 ################################################################################
 
 # Configuration
 MODE=${1:-""}
 SERVER_IP=${2:-""}
 HOSTNAME=$(hostname -s)
-TIMESTAMP=$(date +%Y%m%d_%H%M%S)
-TEST_DIR="${HOSTNAME}_network_throughput"
+
+# Configurable parameters with defaults (overridden by positional args)
+case "$MODE" in
+    server)
+        IPERF_PORT=${2:-5201}
+        TIMESTAMP=${3:-$(date +%Y%m%d_%H%M%S)}
+        ;;
+    client)
+        # client <server_ip> [port] [duration] [udp_bw] [timestamp]
+        IPERF_PORT=${3:-5201}
+        TEST_DURATION=${4:-10}
+        UDP_BANDWIDTH=${5:-"1G"}
+        TIMESTAMP=${6:-$(date +%Y%m%d_%H%M%S)}
+        ;;
+    *)
+        IPERF_PORT=5201
+        TEST_DURATION=10
+        UDP_BANDWIDTH="1G"
+        TIMESTAMP=$(date +%Y%m%d_%H%M%S)
+        ;;
+esac
+
+TEST_DIR="/tmp/${HOSTNAME}_network_throughput"
 mkdir -p "$TEST_DIR"
 OUTPUT_FILE="${TEST_DIR}/${TIMESTAMP}_result.log"
-
-# Test parameters
-IPERF_PORT=5201
-TEST_DURATION=10
-UDP_BANDWIDTH="1G"
 
 # Check for iperf
 if command -v iperf >/dev/null 2>&1; then
@@ -51,12 +67,12 @@ print_error() {
 
 usage() {
     echo "Usage:"
-    echo "  Server mode: $0 server"
-    echo "  Client mode: $0 client <server_ip>"
+    echo "  Server mode: $0 server [iperf_port] [timestamp]"
+    echo "  Client mode: $0 client <server_ip> [iperf_port] [duration] [udp_bw] [timestamp]"
     echo ""
     echo "Examples:"
-    echo "  On Server 1: ./test_network_throughput.sh server"
-    echo "  On Server 2: ./test_network_throughput.sh client 192.168.1.100"
+    echo "  On Server: ./test_network_throughput.sh server 5201"
+    echo "  On Client: ./test_network_throughput.sh client 192.168.1.100 5201 10 1G"
     exit 1
 }
 

@@ -72,6 +72,20 @@
     }
     #close-btn:hover { background: #c0392b; border-color: #c0392b; color: #fff; }
 
+    #disconnect-btn {
+      background: #2a2a2a;
+      border: 1px solid #555;
+      border-radius: 4px;
+      color: #ccc;
+      cursor: pointer;
+      padding: 4px 12px;
+      font-size: 12px;
+      flex-shrink: 0;
+      transition: background 0.15s;
+    }
+    #disconnect-btn:hover { background: #d97706; border-color: #d97706; color: #fff; }
+    #disconnect-btn:disabled { opacity: .5; cursor: not-allowed; }
+
     /* ── Error banner ── */
     #error-banner {
       display: none;
@@ -110,6 +124,7 @@
 <div id="console-header">
   <span id="console-title">&#128196; Console — {{ lpar_name }} &nbsp;[{{ system_id }}]</span>
   <span id="console-status" class="st-connecting">⏳ Connecting…</span>
+  <button id="disconnect-btn" onclick="disconnectConsole()" title="Disconnect SSH session (keep window open)">🔌 Disconnect</button>
   <button id="close-btn" onclick="cleanClose()">✕ Close</button>
 </div>
 
@@ -232,6 +247,16 @@ function cleanClose() {
     sock.disconnect();
   }
   window.close();
+}
+
+// ── Disconnect session (keep window open) ────────────────
+function disconnectConsole() {
+  if (sock && sock.connected) {
+    sock.emit("vterm_close");
+    sock.disconnect();
+  }
+  document.getElementById("disconnect-btn").disabled = true;
+  term.writeln("\r\n\x1b[33m[PowerPilot] Console session disconnected by user.\x1b[0m");
 }
 
 window.addEventListener("beforeunload", () => {

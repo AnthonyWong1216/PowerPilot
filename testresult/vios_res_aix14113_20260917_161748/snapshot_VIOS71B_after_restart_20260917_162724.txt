@@ -1,0 +1,262 @@
+==================================================================
+Timestamp : 2026-09-17 16:27:24
+Host      : aix14113
+Purpose   : Adapter location codes + virtual slot map (fcs* / ent*)
+Command   : lscfg -l <dev> / lsdev -Cl <dev> -F physloc
+------------------------------------------------------------------
+DEVICE   LOCATION CODE                    TYPE     LPAR-ID SLOT   PORT DESCRIPTION
+fcs0     U9105.22A.7892A71-V13-C3-T0      VIRTUAL  13      3      0    Virtual Fibre Channel Client Adapter
+fcs1     U9105.22A.7892A71-V13-C4-T0      VIRTUAL  13      4      0    Virtual Fibre Channel Client Adapter
+ent0     U9105.22A.7892A71-V13-C2-T0      VIRTUAL  13      2      0    Virtual I/O Ethernet Adapter (l-lan)
+ent1     U9105.22A.7892A71-V13-C10-T0     VIRTUAL  13      10     0    Virtual I/O Ethernet Adapter (l-lan)
+
+==================================================================
+Timestamp : 2026-09-17 16:27:24
+Host      : aix14113
+Purpose   : lscfg location code/VPD for FC adapter fcs0
+Command   : lscfg -vl fcs0
+------------------------------------------------------------------
+  fcs0             U9105.22A.7892A71-V13-C3-T0  Virtual Fibre Channel Client Adapter
+
+        Network Address.............C050760C82500010
+        Device Specific.(Z0)........
+        Device Specific.(Z1)........
+        Device Specific.(Z2)........
+        Device Specific.(Z3)........
+        Device Specific.(Z4)........
+        Device Specific.(Z5)........
+        Device Specific.(Z6)........
+        Device Specific.(Z7)........
+        Device Specific.(Z8)........C050760C82500010
+        Device Specific.(Z9)........
+        Hardware Location Code......U9105.22A.7892A71-V13-C3-T0
+
+
+==================================================================
+Timestamp : 2026-09-17 16:27:24
+Host      : aix14113
+Purpose   : lscfg location code/VPD for FC adapter fcs1
+Command   : lscfg -vl fcs1
+------------------------------------------------------------------
+  fcs1             U9105.22A.7892A71-V13-C4-T0  Virtual Fibre Channel Client Adapter
+
+        Network Address.............C050760C82500012
+        Device Specific.(Z0)........
+        Device Specific.(Z1)........
+        Device Specific.(Z2)........
+        Device Specific.(Z3)........
+        Device Specific.(Z4)........
+        Device Specific.(Z5)........
+        Device Specific.(Z6)........
+        Device Specific.(Z7)........
+        Device Specific.(Z8)........C050760C82500012
+        Device Specific.(Z9)........
+        Hardware Location Code......U9105.22A.7892A71-V13-C4-T0
+
+
+==================================================================
+Timestamp : 2026-09-17 16:27:24
+Host      : aix14113
+Purpose   : lscfg location code/VPD for ethernet adapter ent0
+Command   : lscfg -vl ent0
+------------------------------------------------------------------
+  ent0             U9105.22A.7892A71-V13-C2-T0  Virtual I/O Ethernet Adapter (l-lan)
+
+        Network Address.............26FC4F1CCF02
+        Displayable Message.........Virtual I/O Ethernet Adapter (l-lan)
+        Hardware Location Code......U9105.22A.7892A71-V13-C2-T0
+
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : lscfg location code/VPD for ethernet adapter ent1
+Command   : lscfg -vl ent1
+------------------------------------------------------------------
+  ent1             U9105.22A.7892A71-V13-C10-T0  Virtual I/O Ethernet Adapter (l-lan)
+
+        Network Address.............26FC4F1CCF0A
+        Displayable Message.........Virtual I/O Ethernet Adapter (l-lan)
+        Hardware Location Code......U9105.22A.7892A71-V13-C10-T0
+
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : MPIO path status (all disks)
+Command   : lspath
+------------------------------------------------------------------
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi0
+Enabled hdisk0 fscsi1
+Enabled hdisk0 fscsi1
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : Paths for hdisk0
+Command   : lspath -l hdisk0 -H -F 'name path_id parent connection status'
+------------------------------------------------------------------
+name   path_id parent connection         status
+
+hdisk0 0       fscsi0 500507605e80cc01,0 Enabled
+hdisk0 1       fscsi0 500507605e80cc21,0 Enabled
+hdisk0 2       fscsi1 500507605e80cc01,0 Enabled
+hdisk0 3       fscsi1 500507605e80cc21,0 Enabled
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : MPIO attrs for hdisk0 (hcheck_interval => auto-recovery)
+Command   : lsattr -El hdisk0 -a hcheck_interval -a hcheck_mode -a reserve_policy -a algorithm 2>/dev/null
+------------------------------------------------------------------
+hcheck_interval 60             Health Check Interval True+
+hcheck_mode     nonactive      Health Check Mode     True+
+reserve_policy  no_reserve     Reserve Policy        True+
+algorithm       shortest_queue Algorithm             True+
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : lsmpio detail (if available)
+Command   : lsmpio -q 2>/dev/null; lsmpio 2>/dev/null
+------------------------------------------------------------------
+Device           Vendor Id  Product Id       Size       Volume Name              
+---------------------------------------------------------------------------------
+hdisk0           IBM        FlashSystem-9840   60.00GiB  -                      
+name    path_id  status   path_status  parent  connection
+
+hdisk0  0        Enabled  Sel          fscsi0  500507605e80cc01,0
+hdisk0  1        Enabled  Sel          fscsi0  500507605e80cc21,0
+hdisk0  2        Enabled  Deg          fscsi1  500507605e80cc01,0
+hdisk0  3        Enabled  Deg          fscsi1  500507605e80cc21,0
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : Children of fcs0 (fscsi devices)
+Command   : lsdev -Cc driver -p fcs0; lsdev -C -p fcs0
+------------------------------------------------------------------
+fscsi0 Available C3-T0-01 FC SCSI I/O Controller Protocol Device
+fscsi0 Available C3-T0-01 FC SCSI I/O Controller Protocol Device
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : Children of fcs1 (fscsi devices)
+Command   : lsdev -Cc driver -p fcs1; lsdev -C -p fcs1
+------------------------------------------------------------------
+fscsi1 Available C4-T0-01 FC SCSI I/O Controller Protocol Device
+fscsi1 Available C4-T0-01 FC SCSI I/O Controller Protocol Device
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : Network interface list
+Command   : netstat -in
+------------------------------------------------------------------
+Name   Mtu   Network     Address                 Ipkts     Ierrs        Opkts     Oerrs  Coll
+en0    1500  link#2      26.fc.4f.1c.cf.2        145749756     0         19178305     0     0
+en0    1500  192.168.128 192.168.141.13          145749756     0         19178305     0     0
+lo0    16896 link#1                                5127806     0          5127806     0     0
+lo0    16896 127         127.0.0.1                 5127806     0          5127806     0     0
+lo0    16896 ::1%1                                 5127806     0          5127806     0     0
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : entstat en0 (link/state)
+Command   : entstat -d en0 2>/dev/null | head -40
+------------------------------------------------------------------
+-------------------------------------------------------------
+ETHERNET STATISTICS (en0) :
+Device Type: Virtual I/O Ethernet Adapter (l-lan)
+Hardware Address: 26:fc:4f:1c:cf:02
+Elapsed Time: 222 days 4 hours 30 minutes 55 seconds
+
+Transmit Statistics:                          Receive Statistics:
+--------------------                          -------------------
+Packets: 19178301                             Packets: 145750801
+Bytes: 92388140456                            Bytes: 79202252668
+Interrupts: 0                                 Interrupts: 140403780
+Transmit Errors: 0                            Receive Errors: 0
+Packets Dropped: 0                            Packets Dropped: 79382
+                                              Bad Packets: 0
+Max Packets on S/W Transmit Queue: 0         
+S/W Transmit Queue Overflow: 0
+Current S/W+H/W Transmit Queue Length: 0
+
+Elapsed Time: 222 days 4 hours 30 minutes 54 seconds
+Broadcast Packets: 112241                     Broadcast Packets: 125399226
+Multicast Packets: 206309                     Multicast Packets: 1076970
+No Carrier Sense: 0                           CRC Errors: 0
+DMA Underrun: 0                               DMA Overrun: 0
+Lost CTS Errors: 0                            Alignment Errors: 0
+Max Collision Errors: 0                       No Resource Errors: 79382
+Late Collision Errors: 0                      Receive Collision Errors: 0
+Deferred: 0                                   Packet Too Short Errors: 0
+SQE Test: 0                                   Packet Too Long Errors: 0
+Timeout Errors: 0                             Packets Discarded by Adapter: 0
+Single Collision Count: 0                     Receiver Start Count: 0
+Multiple Collision Count: 0
+Current HW Transmit Queue Length: 0
+
+General Statistics:
+-------------------
+No mbuf Errors: 0
+Adapter Reset Count: 0
+Adapter Data Rate: 20000
+Driver Flags: Up Broadcast Running 
+	Simplex 64BitSupport ChecksumOffload 
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : Routing table
+Command   : netstat -rn
+------------------------------------------------------------------
+Routing tables
+Destination        Gateway           Flags   Refs     Use  If   Exp  Groups
+
+Route Tree for Protocol Family 2 (Internet):
+default            192.168.140.254   UG        0    690418 en0      -      -   
+127/8              127.0.0.1         U         7   3888682 lo0      -      -   
+192.168.128.0      192.168.141.13    UHSb      0         0 en0      -      -   =>
+192.168.128/20     192.168.141.13    U         3   2653860 en0      -      -   
+192.168.141.13     127.0.0.1         UGHS      3    218079 lo0      -      -   
+192.168.143.255    192.168.141.13    UHSb      0         4 en0      -      -   
+
+Route Tree for Protocol Family 24 (Internet v6):
+::1%1              ::1%1             UH        4         0 lo0      -      -   
+
+==================================================================
+Timestamp : 2026-09-17 16:27:25
+Host      : aix14113
+Purpose   : Ping test en0 -> 192.168.141.12
+Command   : ping -c 3 -w 5 192.168.141.12 2>&1
+------------------------------------------------------------------
+PING 192.168.141.12: (192.168.141.12): 56 data bytes
+64 bytes from 192.168.141.12: icmp_seq=0 ttl=255 time=0 ms
+64 bytes from 192.168.141.12: icmp_seq=1 ttl=255 time=0 ms
+64 bytes from 192.168.141.12: icmp_seq=2 ttl=255 time=0 ms
+
+--- 192.168.141.12 ping statistics ---
+3 packets transmitted, 3 packets received, 0% packet loss
+round-trip min/avg/max = 0/0/0 ms
+
+==================================================================
+Timestamp : 2026-09-17 16:27:27
+Host      : aix14113
+Purpose   : Recent error report (errpt)
+Command   : errpt | head -30
+------------------------------------------------------------------
+IDENTIFIER TIMESTAMP  T C RESOURCE_NAME  DESCRIPTION
+DE3B8540   0806161326 P H hdisk0         PATH HAS FAILED
+E6DB28E5   0806161326 T H fscsi1         ADAPTER ERROR
+E6DB28E5   0806115426 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806114626 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806112926 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806110626 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806102026 T H fscsi0         ADAPTER ERROR
+E6DB28E5   0806093626 T H fscsi0         ADAPTER ERROR
+

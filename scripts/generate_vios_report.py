@@ -127,6 +127,39 @@ def parse_monitor_entries(content):
     return entries
 
 
+def parse_multinet_entries(content):
+    """Parse monitor_multinet_*.txt log entries.
+
+    Each line has the format:
+        HH:MM:SS en0 OK   10.1.1.1 64 bytes from ...
+        HH:MM:SS en0 LOSS 10.1.1.1 no reply
+
+    Returns a list of dicts: {'time', 'iface', 'status', 'target_ip', 'detail'}.
+    """
+    entries = []
+    for line in content.strip().split('\n'):
+        if not line.strip():
+            continue
+        parts = line.split(None, 4)
+        if len(parts) >= 3:
+            time_str = parts[0]
+            iface = parts[1]
+            status = parts[2]
+            rest = parts[3] if len(parts) > 3 else ''
+            # Extract the target IP (first token of the rest)
+            rest_parts = rest.split(None, 1)
+            target_ip = rest_parts[0] if rest_parts else ''
+            detail = rest_parts[1] if len(rest_parts) > 1 else ''
+            entries.append({
+                'time': time_str,
+                'iface': iface,
+                'status': status,
+                'target_ip': target_ip,
+                'detail': detail,
+            })
+    return entries
+
+
 def parse_vios_ping_entries(content):
     """Parse VIOS ping monitor entries."""
     entries = []
@@ -363,7 +396,8 @@ def categorize_snapshot_sections(sections, static_only=False):
     disk_sections = []
 
     network_keywords = ['Network', 'netstat', 'entstat', 'en0', 'ping']
-    disk_keywords = ['MPIO', 'lspath', 'hdisk', 'lsmpio', 'disk', 'path']
+    disk_keywords = ['MPIO', 'lspath', 'hdisk', 'lsmpio', 'disk', 'path',
+                     'fcs', 'fscsi']
     # Skip routing table and errpt/error report (errpt entries are delayed and
     # inaccurate, so they are excluded from all parts of the report).
     skip_keywords = ['routing', 'route', 'errpt', 'error']
@@ -621,6 +655,7 @@ def parse_test_dir(test_dir):
     inventory_file = glob.glob(os.path.join(test_dir, "inventory_*.txt"))
     disk_monitor_file = glob.glob(os.path.join(test_dir, "monitor_disk_*.txt"))
     ping_monitor_file = glob.glob(os.path.join(test_dir, "monitor_ping_*.txt"))
+    multinet_monitor_file = glob.glob(os.path.join(test_dir, "monitor_multinet_*.txt"))
     vios_ping_file = glob.glob(os.path.join(test_dir, "monitor_vios_ping_*.txt"))
     client_log_file = glob.glob(os.path.join(test_dir, "vios_res_client.log"))
     snapshot_before_files = glob.glob(os.path.join(test_dir, "snapshot_*_before_*.txt"))
@@ -652,6 +687,7 @@ def parse_test_dir(test_dir):
     inventory_content = read_file_content(inventory_file[0]) if inventory_file else ""
     disk_monitor_content = read_file_content(disk_monitor_file[0]) if disk_monitor_file else ""
     ping_monitor_content = read_file_content(ping_monitor_file[0]) if ping_monitor_file else ""
+    multinet_monitor_content = read_file_content(multinet_monitor_file[0]) if multinet_monitor_file else ""
     vios_ping_content = read_file_content(vios_ping_file[0]) if vios_ping_file else ""
     client_log_content = read_file_content(client_log_file[0]) if client_log_file else ""
     
@@ -660,6 +696,7 @@ def parse_test_dir(test_dir):
     
     disk_entries = parse_monitor_entries(disk_monitor_content)
     ping_entries = parse_monitor_entries(ping_monitor_content)
+    multinet_entries = parse_multinet_entries(multinet_monitor_content) if multinet_monitor_content else []
     vios_ping_entries = parse_vios_ping_entries(vios_ping_content)
     
     # Determine VIOS down/up times. The current vios_res_client.sh does NOT
@@ -682,6 +719,7 @@ def parse_test_dir(test_dir):
     
     ping_before, ping_during, ping_after = classify_monitor_by_phase(ping_entries, down_time, up_time)
     disk_before, disk_during, disk_after = classify_monitor_by_phase(disk_entries, down_time, up_time)
+    multinet_before, multinet_during, multinet_after = classify_monitor_by_phase(multinet_entries, down_time, up_time)
     
     snapshot_before_content = read_file_content(snapshot_before_files[0]) if snapshot_before_files else ""
     snapshot_during_content = read_file_content(snapshot_during_files[0]) if snapshot_during_files else ""
@@ -727,6 +765,9 @@ def parse_test_dir(test_dir):
     disk_slow = sum(1 for e in disk_entries if e['status'] == 'SLOW')
     disk_fail = sum(1 for e in disk_entries if e['status'] == 'FAIL')
     
+    total_multinet = len(multinet_entries)
+    multinet_loss = sum(1 for e in multinet_entries if e['status'] == 'LOSS')
+
     return {
         'test_dir': test_dir,
         'basename': basename,
@@ -740,12 +781,16 @@ def parse_test_dir(test_dir):
         'downtime_str': downtime_str,
         'ping_entries': ping_entries,
         'disk_entries': disk_entries,
+        'multinet_entries': multinet_entries,
         'ping_before': ping_before,
         'ping_during': ping_during,
         'ping_after': ping_after,
         'disk_before': disk_before,
         'disk_during': disk_during,
         'disk_after': disk_after,
+        'multinet_before': multinet_before,
+        'multinet_during': multinet_during,
+        'multinet_after': multinet_after,
         'before_net': before_net,
         'before_disk': before_disk,
         'during_net': during_net,
@@ -760,6 +805,8 @@ def parse_test_dir(test_dir):
         'total_disk': total_disk,
         'disk_slow': disk_slow,
         'disk_fail': disk_fail,
+        'total_multinet': total_multinet,
+        'multinet_loss': multinet_loss,
     }
 
 
@@ -785,16 +832,64 @@ def add_host_section(doc, data, host_num, phase, section_offset):
     doc.add_heading(f'{section_offset}.{host_num} Host: {hostname} (VIOS: {vios_name})', level=2)
     
     # Network Path Resilience
-    doc.add_heading(f'Network Path Resilience — {phase_label}', level=3)
+    doc.add_heading(f'Network Path Resilience \u2014 {phase_label}', level=3)
     add_monitor_summary_table(doc, ping_data, "ping")
     add_monitor_detail_entries(doc, ping_data)
-    
+
+    # Multi-Network Ping (per-target IP results from monitor_multinet log)
+    multinet_data = data.get(f'multinet_{phase}', [])
+    if multinet_data:
+        doc.add_heading(f'Multi-Network Ping Targets \u2014 {phase_label}', level=3)
+        # Group by target IP for a per-IP summary
+        from collections import OrderedDict
+        ip_groups = OrderedDict()
+        for e in multinet_data:
+            key = f"{e.get('iface', '?')} -> {e.get('target_ip', '?')}"
+            if key not in ip_groups:
+                ip_groups[key] = {'total': 0, 'ok': 0, 'loss': 0}
+            ip_groups[key]['total'] += 1
+            if e['status'] == 'OK':
+                ip_groups[key]['ok'] += 1
+            else:
+                ip_groups[key]['loss'] += 1
+        # Summary table
+        mn_table = doc.add_table(rows=len(ip_groups) + 1, cols=4)
+        mn_table.style = 'Light Grid Accent 1'
+        for ci, hdr in enumerate(['Target', 'Total', 'OK', 'LOSS']):
+            mn_table.rows[0].cells[ci].text = hdr
+            for p in mn_table.rows[0].cells[ci].paragraphs:
+                for run in p.runs:
+                    run.bold = True
+        for ri, (tgt_key, stats) in enumerate(ip_groups.items(), start=1):
+            mn_table.rows[ri].cells[0].text = tgt_key
+            mn_table.rows[ri].cells[1].text = str(stats['total'])
+            mn_table.rows[ri].cells[2].text = str(stats['ok'])
+            loss_cell = mn_table.rows[ri].cells[3]
+            loss_cell.text = ''
+            loss_p = loss_cell.paragraphs[0]
+            loss_run = loss_p.add_run(str(stats['loss']))
+            if stats['loss'] > 0:
+                loss_run.bold = True
+                loss_run.font.color.rgb = COLOR_RED
+        doc.add_paragraph()
+        # Detail: show status transitions only
+        mn_lines = []
+        prev_status = {}
+        for e in multinet_data:
+            key = f"{e.get('iface', '?')}->{e.get('target_ip', '?')}"
+            st = e['status']
+            if key not in prev_status or prev_status[key] != st:
+                mn_lines.append(f"{e['time']} {e.get('iface','')} {st:4s} {e.get('target_ip','')} {e.get('detail','')}")
+                prev_status[key] = st
+        if mn_lines:
+            add_formatted_code_block(doc, '\n'.join(mn_lines), font_size=7)
+
     if net_sections:
         doc.add_paragraph("Network Snapshot:", style='List Bullet')
         for purpose, sect_data in net_sections:
-            doc.add_paragraph(f"► {purpose}", style='List Bullet 2')
+            doc.add_paragraph(f"\u25ba {purpose}", style='List Bullet 2')
             add_formatted_code_block(doc, sect_data.strip(), font_size=7)
-    
+
     # Disk/SAN Path Resilience
     doc.add_heading(f'Disk/SAN Path Resilience — {phase_label}', level=3)
     add_monitor_summary_table(doc, disk_data, "disk")
@@ -830,6 +925,17 @@ def generate_consolidated_report(test_dirs, output_path):
     font = style.font
     font.name = 'Calibri'
     font.size = Pt(10)
+
+    # Tighten heading styles: reduce vertical spacing and add left indent
+    for lvl, (sp_before, sp_after, indent) in {
+        1: (Pt(12), Pt(4), Cm(0)),
+        2: (Pt(8),  Pt(3), Cm(0.5)),
+        3: (Pt(6),  Pt(2), Cm(1.0)),
+    }.items():
+        hstyle = doc.styles[f'Heading {lvl}']
+        hstyle.paragraph_format.space_before = sp_before
+        hstyle.paragraph_format.space_after = sp_after
+        hstyle.paragraph_format.left_indent = indent
     
     # ---- Title Page ----
     doc.add_paragraph()
@@ -886,7 +992,7 @@ def generate_consolidated_report(test_dirs, output_path):
         run = para.add_run(item_text)
         run.font.size = Pt(10) if not is_sub else Pt(9)
         if is_sub:
-            para.paragraph_format.left_indent = Cm(1.5)
+            para.paragraph_format.left_indent = Cm(0.8)
     
     doc.add_page_break()
     
@@ -1040,7 +1146,7 @@ def generate_consolidated_report(test_dirs, output_path):
     doc.add_heading('7. Conclusion', level=1)
     
     # Overall assessment
-    all_pass = all(d['ping_loss'] <= 5 and d['disk_fail'] == 0 for d in all_data)
+    all_pass = all(d['ping_loss'] <= 5 and d['disk_fail'] == 0 and d.get('multinet_loss', 0) == 0 for d in all_data)
     
     if all_pass:
         doc.add_paragraph(
@@ -1058,8 +1164,9 @@ def generate_consolidated_report(test_dirs, output_path):
     # Per-host conclusion — PASS in green, REVIEW/FAIL in red.
     for data in all_data:
         network_ok = data['ping_loss'] <= 2
+        multinet_ok = data.get('multinet_loss', 0) == 0
         disk_ok = data['disk_fail'] == 0
-        is_pass = network_ok and disk_ok
+        is_pass = network_ok and disk_ok and multinet_ok
         status = "✓ PASS" if is_pass else "⚠ REVIEW"
         para = doc.add_paragraph(style='List Bullet')
         status_run = para.add_run(status)
@@ -1069,6 +1176,7 @@ def generate_consolidated_report(test_dirs, output_path):
             f" — {data['hostname']} (VIOS: {data['vios_name']}): "
             f"Downtime {data['downtime_str']}, "
             f"{data['ping_loss']} ping loss, "
+            f"{data.get('multinet_loss', 0)} multi-net loss, "
             f"{data['disk_slow']} slow / {data['disk_fail']} fail disk I/O"
         )
 
@@ -1077,7 +1185,7 @@ def generate_consolidated_report(test_dirs, output_path):
     doc.add_heading('Path Status Comparison', level=2)
     
     num_hosts = len(all_data)
-    comp_table = doc.add_table(rows=1 + num_hosts * 3, cols=5)
+    comp_table = doc.add_table(rows=1 + num_hosts * 4, cols=5)
     comp_table.style = 'Light Grid Accent 1'
     
     comp_headers = ["Host", "Component", "Before Shutdown", "During Shutdown", "After Shutdown"]
@@ -1095,6 +1203,29 @@ def generate_consolidated_report(test_dirs, output_path):
         comp_table.rows[row_idx].cells[2].text = f"{len(data['ping_before'])} OK" if not any(e['status']=='LOSS' for e in data['ping_before']) else "Some LOSS"
         comp_table.rows[row_idx].cells[3].text = f"{sum(1 for e in data['ping_during'] if e['status']=='OK')} OK, {sum(1 for e in data['ping_during'] if e['status']=='LOSS')} LOSS"
         comp_table.rows[row_idx].cells[4].text = f"{len(data['ping_after'])} OK" if not any(e['status']=='LOSS' for e in data['ping_after']) else "Some LOSS"
+        row_idx += 1
+
+        # Multi-Net row
+        mn_entries = data.get('multinet_entries', [])
+        if mn_entries:
+            mn_b = data.get('multinet_before', [])
+            mn_d = data.get('multinet_during', [])
+            mn_a = data.get('multinet_after', [])
+            comp_table.rows[row_idx].cells[0].text = data['hostname']
+            comp_table.rows[row_idx].cells[1].text = "Multi-Net Ping"
+            mn_b_loss = sum(1 for e in mn_b if e['status'] == 'LOSS')
+            mn_d_ok = sum(1 for e in mn_d if e['status'] == 'OK')
+            mn_d_loss = sum(1 for e in mn_d if e['status'] == 'LOSS')
+            mn_a_loss = sum(1 for e in mn_a if e['status'] == 'LOSS')
+            comp_table.rows[row_idx].cells[2].text = f"{len(mn_b)} OK" if mn_b_loss == 0 else f"Some LOSS ({mn_b_loss})"
+            comp_table.rows[row_idx].cells[3].text = f"{mn_d_ok} OK, {mn_d_loss} LOSS"
+            comp_table.rows[row_idx].cells[4].text = f"{len(mn_a)} OK" if mn_a_loss == 0 else f"Some LOSS ({mn_a_loss})"
+        else:
+            comp_table.rows[row_idx].cells[0].text = data['hostname']
+            comp_table.rows[row_idx].cells[1].text = "Multi-Net Ping"
+            comp_table.rows[row_idx].cells[2].text = "N/A"
+            comp_table.rows[row_idx].cells[3].text = "N/A"
+            comp_table.rows[row_idx].cells[4].text = "N/A"
         row_idx += 1
         
         # Disk row
@@ -1143,8 +1274,26 @@ def main():
     if not os.path.exists(base_dir):
         print(f"Error: testresult directory not found at {base_dir}")
         sys.exit(1)
-    
+
+    # Parse --files <name1> <name2> ... to filter which archives are included
+    selected_files = None
+    if "--files" in sys.argv:
+        idx = sys.argv.index("--files")
+        selected_files = [os.path.basename(f) for f in sys.argv[idx + 1:]]
+
+    # Extract archives and find test directories
     test_dirs = find_test_dirs(base_dir)
+
+    if selected_files:
+        # Filter test_dirs to only those matching selected archive basenames
+        # e.g. "vios_res_aix14113_20260916_082643.tar.gz" -> dir "vios_res_aix14113_20260916_082643"
+        selected_bases = set()
+        for name in selected_files:
+            if name.endswith(".tar.gz"):
+                selected_bases.add(name[:-len(".tar.gz")])
+            else:
+                selected_bases.add(name)
+        test_dirs = [d for d in test_dirs if os.path.basename(d) in selected_bases]
     
     if not test_dirs:
         print("Error: No vios_res_* test result directories found.")

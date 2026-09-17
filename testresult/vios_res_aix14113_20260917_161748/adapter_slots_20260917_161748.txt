@@ -1,0 +1,179 @@
+==================================================================
+ Adapter Location Codes / Virtual Slot Map
+ Host      : aix14113
+ Generated : Thu Sep 17 16:17:48 HKT 2026
+==================================================================
+
+Location code format:
+  Virtual  : U<model>.<serial>-V<lparid>-C<slot>-T<port>
+  Physical : U<model>.<serial>-P<planar>-C<slot>-T<port>
+  -V = LPAR (partition) id, -C = adapter slot, -T = port
+
+DEVICE   LOCATION CODE                    TYPE     LPAR-ID SLOT   PORT DESCRIPTION
+-------- -------------------------------- -------- ------- ------ ---- -----------
+fcs0     U9105.22A.7892A71-V13-C3-T0      VIRTUAL  13      3      0    Virtual Fibre Channel Client Adapter
+fcs1     U9105.22A.7892A71-V13-C4-T0      VIRTUAL  13      4      0    Virtual Fibre Channel Client Adapter
+ent0     U9105.22A.7892A71-V13-C2-T0      VIRTUAL  13      2      0    Virtual I/O Ethernet Adapter (l-lan)
+ent1     U9105.22A.7892A71-V13-C10-T0     VIRTUAL  13      10     0    Virtual I/O Ethernet Adapter (l-lan)
+
+-- Virtual adapter slots in use by this LPAR --
+  fcs0 -> LPAR id 13, virtual slot C3  (match slot C3 on the HMC to find the serving VIOS)
+  fcs1 -> LPAR id 13, virtual slot C4  (match slot C4 on the HMC to find the serving VIOS)
+  ent0 -> LPAR id 13, virtual slot C2  (match slot C2 on the HMC to find the serving VIOS)
+  ent1 -> LPAR id 13, virtual slot C10  (match slot C10 on the HMC to find the serving VIOS)
+
+-- Slot grouping (adapters sharing a slot come from the same VIOS) --
+
+  slot C10   : ent1
+  slot C2    : ent0
+  slot C3    : fcs0
+  slot C4    : fcs1
+
+NOTE: On the HMC, the client virtual slot C<n> listed above is mapped to a
+      server slot on one of the VIOS (vfchost for fcs, SEA/vent for ent).
+      Two adapters in DIFFERENT slots normally mean two different VIOS =>
+      that is what gives the LPAR its dual-VIOS redundancy.
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : lscfg location code + VPD for FC adapter fcs0
+Command   : lscfg -vpl fcs0
+------------------------------------------------------------------
+  fcs0             U9105.22A.7892A71-V13-C3-T0  Virtual Fibre Channel Client Adapter
+
+        Network Address.............C050760C82500010
+        Device Specific.(Z0)........
+        Device Specific.(Z1)........
+        Device Specific.(Z2)........
+        Device Specific.(Z3)........
+        Device Specific.(Z4)........
+        Device Specific.(Z5)........
+        Device Specific.(Z6)........
+        Device Specific.(Z7)........
+        Device Specific.(Z8)........C050760C82500010
+        Device Specific.(Z9)........
+        Hardware Location Code......U9105.22A.7892A71-V13-C3-T0
+
+
+  PLATFORM SPECIFIC
+
+  Name:  vfc-client
+    Node:  vfc-client@30000003
+    Device Type:  fcp
+    Physical Location: U9105.22A.7892A71-V13-C3-T0
+
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : WWPN of fcs0
+Command   : lscfg -vl fcs0 | grep -i 'Network Address'
+------------------------------------------------------------------
+        Network Address.............C050760C82500010
+
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : lscfg location code + VPD for FC adapter fcs1
+Command   : lscfg -vpl fcs1
+------------------------------------------------------------------
+  fcs1             U9105.22A.7892A71-V13-C4-T0  Virtual Fibre Channel Client Adapter
+
+        Network Address.............C050760C82500012
+        Device Specific.(Z0)........
+        Device Specific.(Z1)........
+        Device Specific.(Z2)........
+        Device Specific.(Z3)........
+        Device Specific.(Z4)........
+        Device Specific.(Z5)........
+        Device Specific.(Z6)........
+        Device Specific.(Z7)........
+        Device Specific.(Z8)........C050760C82500012
+        Device Specific.(Z9)........
+        Hardware Location Code......U9105.22A.7892A71-V13-C4-T0
+
+
+  PLATFORM SPECIFIC
+
+  Name:  vfc-client
+    Node:  vfc-client@30000004
+    Device Type:  fcp
+    Physical Location: U9105.22A.7892A71-V13-C4-T0
+
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : WWPN of fcs1
+Command   : lscfg -vl fcs1 | grep -i 'Network Address'
+------------------------------------------------------------------
+        Network Address.............C050760C82500012
+
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : lscfg location code + VPD for ethernet adapter ent0
+Command   : lscfg -vpl ent0
+------------------------------------------------------------------
+  ent0             U9105.22A.7892A71-V13-C2-T0  Virtual I/O Ethernet Adapter (l-lan)
+
+        Network Address.............26FC4F1CCF02
+        Displayable Message.........Virtual I/O Ethernet Adapter (l-lan)
+        Hardware Location Code......U9105.22A.7892A71-V13-C2-T0
+
+
+  PLATFORM SPECIFIC
+
+  Name:  l-lan
+    Node:  l-lan@30000002
+    Device Type:  network
+    Physical Location: U9105.22A.7892A71-V13-C2-T0
+
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : lscfg location code + VPD for ethernet adapter ent1
+Command   : lscfg -vpl ent1
+------------------------------------------------------------------
+  ent1             U9105.22A.7892A71-V13-C10-T0  Virtual I/O Ethernet Adapter (l-lan)
+
+        Network Address.............26FC4F1CCF0A
+        Displayable Message.........Virtual I/O Ethernet Adapter (l-lan)
+        Hardware Location Code......U9105.22A.7892A71-V13-C10-T0
+
+
+  PLATFORM SPECIFIC
+
+  Name:  l-lan
+    Node:  l-lan@3000000a
+    Device Type:  network
+    Physical Location: U9105.22A.7892A71-V13-C10-T0
+
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : All adapters (lsdev -Cc adapter)
+Command   : lsdev -Cc adapter
+------------------------------------------------------------------
+ent0    Available       Virtual I/O Ethernet Adapter (l-lan)
+ent1    Available       Virtual I/O Ethernet Adapter (l-lan)
+fcs0    Available C3-T0 Virtual Fibre Channel Client Adapter
+fcs1    Available C4-T0 Virtual Fibre Channel Client Adapter
+hdcrypt Available       Data encryption
+pkcs11  Available       ACF/PKCS#11 Device
+vsa0    Available       LPAR Virtual Serial Adapter
+vscsi0  Available       Virtual SCSI Client Adapter
+
+==================================================================
+Timestamp : 2026-09-17 16:17:49
+Host      : aix14113
+Purpose   : Adapter location codes (lsdev physloc)
+Command   : lsdev -Cc adapter -F 'name status physloc description'
+------------------------------------------------------------------
+ent0    Available U9105.22A.7892A71-V13-C2-T0  Virtual I/O Ethernet Adapter (l-lan)
+ent1    Available U9105.22A.7892A71-V13-C10-T0 Virtual I/O Ethernet Adapter (l-lan)
+fcs0    Available U9105.22A.7892A71-V13-C3-T0  Virtual Fibre Channel Client Adapter
+fcs1    Available U9105.22A.7892A71-V13-C4-T0  Virtual Fibre Channel Client Adapter
+hdcrypt Available                              Data encryption
+pkcs11  Available                              ACF/PKCS#11 Device
+vsa0    Available U9105.22A.7892A71-V13-C0     LPAR Virtual Serial Adapter
+vscsi0  Available U9105.22A.7892A71-V13-C5-T0  Virtual SCSI Client Adapter
+
